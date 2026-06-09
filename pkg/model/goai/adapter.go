@@ -31,11 +31,11 @@ func buildGoAIOptions(ctx context.Context, request agent.ModelRequest) ([]goai.O
 	if request.SystemPrompt != "" {
 		options = append(options, goai.WithSystem(request.SystemPrompt))
 	}
+	if request.UserPrompt != "" {
+		messages = append(messages, goai.UserMessage(request.UserPrompt))
+	}
 	if len(messages) > 0 {
 		options = append(options, goai.WithMessages(messages...))
-	}
-	if request.UserPrompt != "" {
-		options = append(options, goai.WithMessages(goai.UserMessage(request.UserPrompt)))
 	}
 	if len(tools) > 0 {
 		options = append(options, goai.WithTools(tools...))

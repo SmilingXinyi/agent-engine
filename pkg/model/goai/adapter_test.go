@@ -100,3 +100,31 @@ func TestToGoAIToolsExecutesOriginalHandler(t *testing.T) {
 		t.Fatalf("expected partial output, got %q", output)
 	}
 }
+
+func TestBuildGoAIOptions(t *testing.T) {
+	ctx := context.Background()
+	request := agent.ModelRequest{
+		Messages: []agent.Message{
+			agent.TextMessage{Role: agent.RoleUser, Content: "message 1"},
+		},
+		UserPrompt: "user prompt",
+		Options: agent.RunOptions{
+			Temperature: float64Ptr(0.7),
+		},
+	}
+
+	options, collector, err := buildGoAIOptions(ctx, request)
+	if err != nil {
+		t.Fatalf("build options: %v", err)
+	}
+	if options == nil {
+		t.Fatal("expected options, got nil")
+	}
+	if collector == nil {
+		t.Fatal("expected collector, got nil")
+	}
+}
+
+func float64Ptr(f float64) *float64 {
+	return &f
+}
