@@ -71,6 +71,33 @@ func main() {
 }
 ```
 
+## 工具调用日志
+
+工具日志应统一收敛在 `RunOptions.EventHandler` 的开始与结束回调中，不要在工具 Handler、流式输出或请求结束后再重复打印 `response.ToolCalls`。
+
+```go
+options := agent.RunOptions{
+    EventHandler: agent.StdoutToolEventHandler(),
+}
+```
+
+如需自定义输出目标，可使用 `agent.ToolEventLogger`：
+
+```go
+logger := agent.ToolEventLogger{Writer: os.Stderr}
+options := agent.RunOptions{
+    EventHandler: logger.EventHandler(),
+}
+```
+
+事件语义：
+
+- 工具开始：`calling tool: <name>`
+- 工具成功：`tool done: <name>`
+- 工具失败：`tool error: <name> <err>`
+
+`response.ToolCalls` 仍可用于持久化或审计，但不应再作为控制台日志的第二入口。
+
 ## 项目结构
 
 - `pkg/agent`: 核心引擎接口与实现。

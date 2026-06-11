@@ -70,6 +70,24 @@ func main() {
 }
 ```
 
+## Tool Call Logging
+
+Keep tool logs in `RunOptions.EventHandler` only. Do not duplicate logging in tool handlers or by iterating `response.ToolCalls` after the request completes.
+
+```go
+options := agent.RunOptions{
+    EventHandler: agent.StdoutToolEventHandler(),
+}
+```
+
+Lifecycle messages:
+
+- Start: `calling tool: <name>`
+- Success: `tool done: <name>`
+- Failure: `tool error: <name> <err>`
+
+Use `response.ToolCalls` for persistence or auditing, not as a second logging path.
+
 ## Project Structure
 
 - `pkg/agent`: Core engine interfaces and implementation.

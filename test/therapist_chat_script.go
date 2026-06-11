@@ -63,19 +63,8 @@ func main() {
 				History:      history,
 				Tools:        tools,
 				Options: agent.RunOptions{
-					MaxSteps: 5,
-					EventHandler: agent.EventHandlerFunc{
-						ToolCallStart: func(ctx context.Context, event agent.ToolCallStartEvent) error {
-							_ = ctx
-							fmt.Printf("\n[tool %s start]\n", event.ToolName)
-							return nil
-						},
-						ToolCallFinish: func(ctx context.Context, event agent.ToolCallFinishEvent) error {
-							_ = ctx
-							fmt.Printf("\n[tool %s end]\n", event.ToolName)
-							return nil
-						},
-					},
+					MaxSteps:     5,
+					EventHandler: agent.StdoutToolEventHandler(),
 				},
 			},
 			StreamHandler: agent.StreamHandlerFunc(func(ctx context.Context, chunk string) error {
