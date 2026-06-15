@@ -45,10 +45,17 @@ type StreamRequest struct {
 // Response describes the final result of an agent run.
 type Response struct {
 	Text      string
+	Thinking  string
 	Messages  []Message
 	ToolCalls []ToolCallRecord
 	Usage     *Usage
 	Metadata  map[string]string
+}
+
+// ThinkingConfig controls extended thinking/reasoning mode for supported models.
+type ThinkingConfig struct {
+	Enabled      bool
+	BudgetTokens *int
 }
 
 // RunOptions describes stable runtime controls for an agent run.
@@ -56,6 +63,7 @@ type RunOptions struct {
 	MaxSteps        int
 	Temperature     *float64
 	MaxOutputTokens *int
+	Thinking        *ThinkingConfig
 	EventHandler    EventHandler
 }
 
@@ -183,6 +191,22 @@ type StreamHandlerFunc func(context.Context, string) error
 
 // OnText handles a streamed text chunk.
 func (handler StreamHandlerFunc) OnText(ctx context.Context, chunk string) error {
+	if handler == nil {
+		return nil
+	}
+	return handler(ctx, chunk)
+}
+
+// ThinkingStreamHandler receives thinking/reasoning chunks from a streaming agent run.
+type ThinkingStreamHandler interface {
+	OnThinking(ctx context.Context, chunk string) error
+}
+
+// ThinkingStreamHandlerFunc adapts a function into a ThinkingStreamHandler.
+type ThinkingStreamHandlerFunc func(context.Context, string) error
+
+// OnThinking handles a streamed thinking chunk.
+func (handler ThinkingStreamHandlerFunc) OnThinking(ctx context.Context, chunk string) error {
 	if handler == nil {
 		return nil
 	}

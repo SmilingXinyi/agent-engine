@@ -125,6 +125,28 @@ func TestBuildGoAIOptions(t *testing.T) {
 	}
 }
 
+func TestBuildThinkingProviderOptions(t *testing.T) {
+	disabled := buildThinkingProviderOptions(agent.RunOptions{})
+	if disabled != nil {
+		t.Fatalf("expected nil provider options when thinking is disabled, got %#v", disabled)
+	}
+
+	budget := 1024
+	enabled := buildThinkingProviderOptions(agent.RunOptions{
+		Thinking: &agent.ThinkingConfig{Enabled: true, BudgetTokens: &budget},
+	})
+	thinking, ok := enabled["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected provider options: %#v", enabled)
+	}
+	if thinking["type"] != "enabled" {
+		t.Fatalf("unexpected thinking type: %#v", thinking["type"])
+	}
+	if thinking["budget_tokens"] != 1024 {
+		t.Fatalf("unexpected budget tokens: %#v", thinking["budget_tokens"])
+	}
+}
+
 func float64Ptr(f float64) *float64 {
 	return &f
 }

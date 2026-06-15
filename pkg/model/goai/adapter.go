@@ -46,8 +46,22 @@ func buildGoAIOptions(ctx context.Context, request agent.ModelRequest) ([]goai.O
 	if request.Options.MaxOutputTokens != nil {
 		options = append(options, goai.WithMaxOutputTokens(*request.Options.MaxOutputTokens))
 	}
+	if providerOptions := buildThinkingProviderOptions(request.Options); providerOptions != nil {
+		options = append(options, goai.WithProviderOptions(providerOptions))
+	}
 	options = append(options, buildToolEventOptions(ctx, request.Options.EventHandler, collector)...)
 	return options, collector, nil
+}
+
+func buildThinkingProviderOptions(options agent.RunOptions) map[string]any {
+	if options.Thinking == nil || !options.Thinking.Enabled {
+		return nil
+	}
+	thinking := map[string]any{"type": "enabled"}
+	if options.Thinking.BudgetTokens != nil {
+		thinking["budget_tokens"] = *options.Thinking.BudgetTokens
+	}
+	return map[string]any{"thinking": thinking}
 }
 
 func buildToolEventOptions(ctx context.Context, handler agent.EventHandler, collector *toolCallCollector) []goai.Option {

@@ -17,6 +17,9 @@ func NewEngineWithClientFactory(factory ModelClientFactory) Engine {
 
 // Execute runs a non-streaming agent request and returns the final response.
 func (engine *defaultEngine) Execute(ctx context.Context, request Request) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	modelRequest, client, err := engine.prepare(ctx, request)
 	if err != nil {
 		return Response{}, err
@@ -30,6 +33,9 @@ func (engine *defaultEngine) Execute(ctx context.Context, request Request) (Resp
 
 // Stream runs a streaming agent request and returns the final response after the stream ends.
 func (engine *defaultEngine) Stream(ctx context.Context, request StreamRequest) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	modelRequest, client, err := engine.prepare(ctx, request.Request)
 	if err != nil {
 		return Response{}, err
@@ -75,6 +81,7 @@ func responseFromModelResponse(response ModelResponse, fallbackMetadata map[stri
 	}
 	return Response{
 		Text:      response.Text,
+		Thinking:  response.Thinking,
 		Messages:  append([]Message(nil), response.Messages...),
 		ToolCalls: append([]ToolCallRecord(nil), response.ToolCalls...),
 		Usage:     response.Usage,

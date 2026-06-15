@@ -31,6 +31,7 @@ type ModelRequest struct {
 // ModelResponse describes the standard result returned by a model client.
 type ModelResponse struct {
 	Text      string
+	Thinking  string
 	Messages  []Message
 	ToolCalls []ToolCallRecord
 	Usage     *Usage

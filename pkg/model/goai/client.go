@@ -95,8 +95,10 @@ func (client *goaiClient) GenerateText(ctx context.Context, request agent.ModelR
 	if err != nil {
 		return agent.ModelResponse{}, fmt.Errorf("llm execute failed: %w", err)
 	}
+	text, thinking := textAndThinkingFromResult(result)
 	return agent.ModelResponse{
-		Text:      result.Text,
+		Text:      text,
+		Thinking:  thinking,
 		Messages:  messagesFromProvider(result.ResponseMessages),
 		ToolCalls: collector.recordsSnapshot(),
 		Usage:     usageFromProvider(result.TotalUsage),
@@ -114,14 +116,35 @@ func (client *goaiClient) StreamText(ctx context.Context, request agent.ModelReq
 	if err != nil {
 		return agent.ModelResponse{}, fmt.Errorf("llm stream request failed: %w", err)
 	}
-	for chunk := range stream.TextStream() {
-		if handler != nil {
-			if err := handler.OnText(ctx, chunk); err != nil {
-				result := stream.Result()
-				return modelResponseFromStreamResult(result, collector, request.Metadata), err
+
+	var thinkingHandler agent.ThinkingStreamHandler
+	if handler != nil {
+		if typedHandler, ok := handler.(agent.ThinkingStreamHandler); ok {
+			thinkingHandler = typedHandler
+		}
+	}
+
+	for chunk := range stream.Stream() {
+		if err := ctx.Err(); err != nil {
+			return modelResponseFromStreamResult(stream.Result(), collector, request.Metadata), err
+		}
+
+		switch chunk.Type {
+		case provider.ChunkText:
+			if handler != nil {
+				if err := handler.OnText(ctx, chunk.Text); err != nil {
+					return modelResponseFromStreamResult(stream.Result(), collector, request.Metadata), err
+				}
+			}
+		case provider.ChunkReasoning:
+			if thinkingHandler != nil {
+				if err := thinkingHandler.OnThinking(ctx, chunk.Text); err != nil {
+					return modelResponseFromStreamResult(stream.Result(), collector, request.Metadata), err
+				}
 			}
 		}
 	}
+
 	result := stream.Result()
 	if err := stream.Err(); err != nil {
 		return modelResponseFromStreamResult(result, collector, request.Metadata), err
@@ -133,8 +156,10 @@ func modelResponseFromStreamResult(result *goai.TextResult, collector *toolCallC
 	if result == nil {
 		return agent.ModelResponse{Metadata: copyStringMap(metadata)}
 	}
+	text, thinking := textAndThinkingFromResult(result)
 	return agent.ModelResponse{
-		Text:      result.Text,
+		Text:      text,
+		Thinking:  thinking,
 		Messages:  messagesFromProvider(result.ResponseMessages),
 		ToolCalls: collector.recordsSnapshot(),
 		Usage:     usageFromProvider(result.TotalUsage),
