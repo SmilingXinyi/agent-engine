@@ -23,6 +23,9 @@ func (defaultRequestValidator) ValidateRequest(ctx context.Context, request Requ
 	if request.Options.MaxSteps < 0 {
 		return fmt.Errorf("max steps must be greater than or equal to 0")
 	}
+	if request.Options.MaxMessages < 0 {
+		return fmt.Errorf("max messages must be greater than or equal to 0")
+	}
 	seenTools := make(map[string]struct{}, len(request.Tools))
 	for index, tool := range request.Tools {
 		toolName := strings.TrimSpace(tool.Name)

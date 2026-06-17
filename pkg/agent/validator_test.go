@@ -48,6 +48,11 @@ func TestDefaultRequestValidatorValidateRequest(t *testing.T) {
 			wantError: "max steps must be greater than or equal to 0",
 		},
 		{
+			name:      "negative max messages",
+			mutate:    func(request *Request) { request.Options.MaxMessages = -1 },
+			wantError: "max messages must be greater than or equal to 0",
+		},
+		{
 			name: "missing tool name",
 			mutate: func(request *Request) {
 				request.Tools = []Tool{{Handler: ToolHandlerFunc(func(context.Context, json.RawMessage) (string, error) { return "", nil })}}

@@ -54,7 +54,7 @@ func (engine *defaultEngine) prepare(ctx context.Context, request Request) (Mode
 	return ModelRequest{
 		SystemPrompt: request.SystemPrompt,
 		UserPrompt:   request.UserPrompt,
-		Messages:     append([]Message(nil), request.History...),
+		Messages:     normalizeHistoryMessages(append([]Message(nil), request.History...), request.Options.MaxMessages),
 		Tools:        append([]Tool(nil), request.Tools...),
 		Options:      request.Options,
 		Metadata:     copyStringMap(request.Metadata),
@@ -64,6 +64,9 @@ func (engine *defaultEngine) prepare(ctx context.Context, request Request) (Mode
 func normalizeRunOptions(options RunOptions) RunOptions {
 	if options.MaxSteps == 0 {
 		options.MaxSteps = DefaultMaxSteps
+	}
+	if options.MaxMessages == 0 {
+		options.MaxMessages = DefaultMaxMessages
 	}
 	return options
 }
@@ -75,7 +78,7 @@ func responseFromModelResponse(response ModelResponse, fallbackMetadata map[stri
 	}
 	return Response{
 		Text:      response.Text,
-		Messages:  append([]Message(nil), response.Messages...),
+		Messages:  assignMessageIDs(append([]Message(nil), response.Messages...)),
 		ToolCalls: append([]ToolCallRecord(nil), response.ToolCalls...),
 		Usage:     response.Usage,
 		Metadata:  metadata,

@@ -9,6 +9,9 @@ import (
 // DefaultMaxSteps is used when RunOptions.MaxSteps is not specified.
 const DefaultMaxSteps = 20
 
+// DefaultMaxMessages is used when RunOptions.MaxMessages is not specified.
+const DefaultMaxMessages = 100
+
 // ModelConfig describes the model endpoint used by an agent run.
 type ModelConfig struct {
 	Provider string
@@ -54,6 +57,7 @@ type Response struct {
 // RunOptions describes stable runtime controls for an agent run.
 type RunOptions struct {
 	MaxSteps        int
+	MaxMessages     int
 	Temperature     *float64
 	MaxOutputTokens *int
 	EventHandler    EventHandler
@@ -94,6 +98,7 @@ type Message interface {
 
 // TextMessage describes a system, user, or assistant text message.
 type TextMessage struct {
+	ID      string `json:"id,omitempty"`
 	Role    Role   `json:"role"`
 	Content string `json:"content"`
 	Name    string `json:"name,omitempty"`
@@ -104,6 +109,7 @@ func (TextMessage) message() {}
 
 // ToolCallMessage describes assistant tool call requests.
 type ToolCallMessage struct {
+	ID        string     `json:"id,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls"`
 }
 
@@ -112,6 +118,7 @@ func (ToolCallMessage) message() {}
 
 // ToolResultMessage describes a tool execution result.
 type ToolResultMessage struct {
+	ID         string     `json:"id,omitempty"`
 	ToolResult ToolResult `json:"tool_result"`
 }
 

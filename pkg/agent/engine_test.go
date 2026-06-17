@@ -63,6 +63,12 @@ func TestEngineExecuteUsesClientFactoryAndReturnsResponse(t *testing.T) {
 	if client.generateRequest.Options.MaxSteps != DefaultMaxSteps {
 		t.Fatalf("expected default max steps, got %d", client.generateRequest.Options.MaxSteps)
 	}
+	if client.generateRequest.Options.MaxMessages != DefaultMaxMessages {
+		t.Fatalf("expected default max messages, got %d", client.generateRequest.Options.MaxMessages)
+	}
+	if len(client.generateRequest.Messages) != 0 {
+		t.Fatalf("expected empty history, got %d messages", len(client.generateRequest.Messages))
+	}
 	if response.Text != "done" || response.Usage.TotalTokens != 3 || response.Metadata["trace"] != "1" {
 		t.Fatalf("unexpected response: %+v", response)
 	}
@@ -141,5 +147,68 @@ func TestEngineStreamReturnsPartialResponseOnHandlerError(t *testing.T) {
 	}
 	if response.Text != "a" {
 		t.Fatalf("expected partial response, got %+v", response)
+	}
+}
+
+func TestEngineExecuteNormalizesHistoryMessages(t *testing.T) {
+	client := &fakeModelClient{}
+	engine := NewEngineWithClientFactory(&fakeModelClientFactory{client: client})
+	history := make([]Message, DefaultMaxMessages+2)
+	for index := range history {
+		history[index] = TextMessage{Role: RoleUser, Content: "history"}
+	}
+
+	_, err := engine.Execute(context.Background(), Request{
+		ModelConfig: ModelConfig{Provider: "openai", APIKey: "token", BaseURL: "https://example.com", Name: "model"},
+		UserPrompt:  "hello",
+		History:     history,
+		Options:     RunOptions{MaxMessages: DefaultMaxMessages},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(client.generateRequest.Messages) != DefaultMaxMessages {
+		t.Fatalf("expected %d history messages, got %d", DefaultMaxMessages, len(client.generateRequest.Messages))
+	}
+	for index, message := range client.generateRequest.Messages {
+		if messageID(message) == "" {
+			t.Fatalf("expected message id at index %d", index)
+		}
+	}
+}
+
+type fakeModelClientWithMessages struct {
+	fakeModelClient
+	responseMessages []Message
+}
+
+func (client *fakeModelClientWithMessages) GenerateText(ctx context.Context, request ModelRequest) (ModelResponse, error) {
+	response, err := client.fakeModelClient.GenerateText(ctx, request)
+	if err != nil {
+		return response, err
+	}
+	response.Messages = append([]Message(nil), client.responseMessages...)
+	return response, nil
+}
+
+func TestEngineExecuteAssignsMessageIDsInResponse(t *testing.T) {
+	client := &fakeModelClientWithMessages{
+		responseMessages: []Message{
+			TextMessage{Role: RoleAssistant, Content: "done"},
+		},
+	}
+	engine := NewEngineWithClientFactory(&fakeModelClientFactory{client: client})
+	response, err := engine.Execute(context.Background(), Request{
+		ModelConfig: ModelConfig{Provider: "openai", APIKey: "token", BaseURL: "https://example.com", Name: "model"},
+		UserPrompt:  "hello",
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(response.Messages) != 1 {
+		t.Fatalf("expected 1 response message, got %d", len(response.Messages))
+	}
+	if messageID(response.Messages[0]) == "" {
+		t.Fatalf("expected response message id, got empty")
 	}
 }
