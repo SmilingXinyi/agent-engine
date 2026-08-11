@@ -31,3 +31,6 @@ go.work.sum
 
 # Environment variables
 .env
+
+# Reference source (read-only)
+.zip-src/

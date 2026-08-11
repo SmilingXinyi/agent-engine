@@ -5,8 +5,10 @@ A lightweight, portable, and extensible AI Agent engine written in Go.
 ## Features
 
 - **Portable Engine**: Decoupled from session and workspace state, making it easy to integrate into any Go application.
-- **Streaming Support**: Real-time text generation with streaming chunks.
-- **Tool Calling**: Native support for tool definitions and execution.
+- **Streaming Support**: Real-time text generation with streaming chunks, including optional reasoning/thinking streams.
+- **Tool Calling**: Native support for tool definitions and execution, external tool stubs, and `OnBeforeToolExecute` hooks.
+- **Tool Environment Injection**: Inject hidden parameters into tool calls via `agent.WithToolEnv`.
+- **Debug Sink**: Optional YAML request dumps for diagnosing LLM payloads.
 - **Model Context Protocol (MCP)**: Integration with MCP for extended capabilities.
 - **Event Driven**: Comprehensive event handlers for tool execution lifecycle.
 - **Flexible Adapters**: Built-in support for multiple LLM providers via `goai`.
@@ -50,6 +52,7 @@ func main() {
 	_ = godotenv.Load()
 
 	engine := agent.NewEngineWithClientFactory(goai.NewClientFactory())
+	// Or: agent.NewEngine(agent.WithProvider(goai.NewClientFactory()))
 	
 	ctx := context.Background()
 	response, err := engine.Execute(ctx, agent.Request{
@@ -105,6 +108,9 @@ go run ./examples/demo -mode=hello
 go run ./examples/demo -mode=stream
 go run ./examples/demo -mode=tools
 go run ./examples/demo -mode=skills
+go run ./examples/demo -mode=skilltool
+go run ./examples/demo -mode=thinking
+go run ./examples/demo -mode=toolenv
 go run ./examples/demo -mode=chat
 ```
 

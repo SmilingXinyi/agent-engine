@@ -2,6 +2,8 @@ package goai
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -9,9 +11,10 @@ import (
 )
 
 type toolCallCollector struct {
-	mutex   sync.Mutex
-	starts  map[string]agent.ToolCallStartEvent
-	records []agent.ToolCallRecord
+	mutex         sync.Mutex
+	starts        map[string]agent.ToolCallStartEvent
+	records       []agent.ToolCallRecord
+	runtimeErrors []error
 }
 
 func newToolCallCollector() *toolCallCollector {
@@ -70,6 +73,31 @@ func (collector *toolCallCollector) recordsSnapshot() []agent.ToolCallRecord {
 		result[index] = record
 	}
 	return result
+}
+
+func (collector *toolCallCollector) recordHandlerError(stage string, toolName string, err error) {
+	if err == nil {
+		return
+	}
+	collector.recordRuntimeError(fmt.Errorf("%s tool event handler failed for %s: %w", stage, toolName, err))
+}
+
+func (collector *toolCallCollector) recordRuntimeError(err error) {
+	if err == nil {
+		return
+	}
+	collector.mutex.Lock()
+	defer collector.mutex.Unlock()
+	collector.runtimeErrors = append(collector.runtimeErrors, err)
+}
+
+func (collector *toolCallCollector) runtimeError() error {
+	collector.mutex.Lock()
+	defer collector.mutex.Unlock()
+	if len(collector.runtimeErrors) == 0 {
+		return nil
+	}
+	return errors.Join(collector.runtimeErrors...)
 }
 
 func firstNonEmpty(values ...string) string {

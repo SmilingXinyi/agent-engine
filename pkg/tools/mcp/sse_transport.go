@@ -25,6 +25,10 @@ type RelativeSSETransport struct {
 
 	respBody      io.ReadCloser
 	endpointReady chan struct{}
+	endpointOnce  sync.Once
+	endpointErr   error
+	terminalErr   error
+	pending       map[string]any
 
 	mu        sync.Mutex
 	onMessage func(mcp.JSONRPCMessage)
@@ -33,7 +37,11 @@ type RelativeSSETransport struct {
 }
 
 func NewRelativeSSETransport(sseURL string, headers map[string]string) *RelativeSSETransport {
-	return &RelativeSSETransport{URL: sseURL, Headers: headers}
+	clonedHeaders := make(map[string]string, len(headers))
+	for name, value := range headers {
+		clonedHeaders[name] = value
+	}
+	return &RelativeSSETransport{URL: sseURL, Headers: clonedHeaders}
 }
 
 func (transport *RelativeSSETransport) OnMessage(fn func(mcp.JSONRPCMessage)) {
@@ -55,7 +63,14 @@ func (transport *RelativeSSETransport) OnError(fn func(error)) {
 }
 
 func (transport *RelativeSSETransport) Start(ctx context.Context) error {
+	transport.mu.Lock()
+	transport.Endpoint = ""
+	transport.endpointErr = nil
+	transport.terminalErr = nil
+	transport.pending = make(map[string]any)
 	transport.endpointReady = make(chan struct{})
+	transport.endpointOnce = sync.Once{}
+	transport.mu.Unlock()
 	client := transport.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
@@ -74,37 +89,51 @@ func (transport *RelativeSSETransport) Start(ctx context.Context) error {
 		return fmt.Errorf("mcp: SSE connection: %w", err)
 	}
 	if response.StatusCode != http.StatusOK {
-		_ = response.Body.Close()
-		return fmt.Errorf("mcp: SSE connection failed: HTTP %d", response.StatusCode)
+		responseErr := fmt.Errorf("mcp: SSE connection failed: HTTP %d", response.StatusCode)
+		return errors.Join(responseErr, closeResponseBody(response.Body))
 	}
 	contentType := response.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, "text/event-stream") {
-		_ = response.Body.Close()
-		return fmt.Errorf("mcp: expected text/event-stream, got %q", contentType)
+		responseErr := fmt.Errorf("mcp: expected text/event-stream, got %q", contentType)
+		return errors.Join(responseErr, closeResponseBody(response.Body))
 	}
+	transport.mu.Lock()
 	transport.respBody = response.Body
+	transport.mu.Unlock()
 	go transport.readSSE(bufio.NewReader(response.Body))
 	return nil
 }
 
-func (transport *RelativeSSETransport) Send(ctx context.Context, msg mcp.JSONRPCMessage) error {
+func (transport *RelativeSSETransport) Send(ctx context.Context, msg mcp.JSONRPCMessage) (sendErr error) {
 	transport.mu.Lock()
 	endpoint := transport.Endpoint
+	endpointErr := transport.endpointErr
+	terminalErr := transport.terminalErr
+	endpointReady := transport.endpointReady
 	transport.mu.Unlock()
-	if endpoint == "" {
-		if transport.endpointReady != nil {
+	if terminalErr != nil {
+		return terminalErr
+	}
+	if endpoint == "" && endpointErr == nil {
+		if endpointReady != nil {
 			select {
-			case <-transport.endpointReady:
+			case <-endpointReady:
 				transport.mu.Lock()
 				endpoint = transport.Endpoint
+				endpointErr = transport.endpointErr
 				transport.mu.Unlock()
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
+		if endpointErr != nil {
+			return endpointErr
+		}
 		if endpoint == "" {
 			return errors.New("mcp: SSE endpoint not yet discovered from server")
 		}
+	} else if endpointErr != nil {
+		return endpointErr
 	}
 
 	body, err := json.Marshal(msg)
@@ -124,32 +153,64 @@ func (transport *RelativeSSETransport) Send(ctx context.Context, msg mcp.JSONRPC
 		request.Header.Set(name, value)
 	}
 
+	pendingKey, tracksResponse, err := transport.trackPending(msg)
+	if err != nil {
+		return err
+	}
+	if tracksResponse {
+		defer func() {
+			if sendErr != nil {
+				transport.removePending(pendingKey)
+			}
+		}()
+		if done := ctx.Done(); done != nil {
+			go func() {
+				<-done
+				transport.removePending(pendingKey)
+			}()
+		}
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("mcp: send request: %w", err)
 	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode >= http.StatusBadRequest {
-		responseBody, _ := io.ReadAll(response.Body)
+	defer func() {
+		sendErr = errors.Join(sendErr, closeResponseBody(response.Body))
+	}()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		responseBody, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			return fmt.Errorf("mcp: HTTP %d: read response body: %w", response.StatusCode, readErr)
+		}
 		return fmt.Errorf("mcp: HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	contentType := response.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "application/json") {
 		var responseMessage mcp.JSONRPCMessage
-		if err := json.NewDecoder(response.Body).Decode(&responseMessage); err == nil && responseMessage.JSONRPC == "2.0" {
-			transport.dispatchMessage(responseMessage)
+		if err := json.NewDecoder(response.Body).Decode(&responseMessage); err != nil {
+			return fmt.Errorf("mcp: decode JSON response: %w", err)
 		}
+		if responseMessage.JSONRPC != "2.0" {
+			return fmt.Errorf("mcp: invalid JSON-RPC response version %q", responseMessage.JSONRPC)
+		}
+		if tracksResponse && pendingKey != pendingKeyForID(responseMessage.ID) {
+			return fmt.Errorf("mcp: JSON-RPC response id does not match request")
+		}
+		transport.dispatchMessage(responseMessage)
 	}
 	return nil
 }
 
 func (transport *RelativeSSETransport) Close() error {
+	closeErr := errors.New("mcp: SSE transport closed")
+	transport.failEndpoint(fmt.Errorf("%w before endpoint discovery", closeErr))
+	transport.failPending(closeErr)
 	transport.mu.Lock()
 	body := transport.respBody
 	transport.respBody = nil
 	transport.mu.Unlock()
 	if body != nil {
-		_ = body.Close()
+		return closeResponseBody(body)
 	}
 	return nil
 }
@@ -159,9 +220,15 @@ func (transport *RelativeSSETransport) readSSE(reader *bufio.Reader) {
 		eventType, data, err := readSSEEvent(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				connectionErr := errors.New("mcp: SSE connection closed")
+				transport.failEndpoint(fmt.Errorf("%w before endpoint discovery", connectionErr))
+				transport.failPending(connectionErr)
 				transport.dispatchClose()
 			} else {
-				transport.dispatchError(err)
+				connectionErr := fmt.Errorf("mcp: read SSE stream: %w", err)
+				transport.failEndpoint(fmt.Errorf("mcp: SSE endpoint discovery failed: %w", err))
+				transport.failPending(connectionErr)
+				transport.dispatchError(connectionErr)
 			}
 			return
 		}
@@ -175,43 +242,161 @@ func (transport *RelativeSSETransport) readSSE(reader *bufio.Reader) {
 
 		var msg mcp.JSONRPCMessage
 		if err := json.Unmarshal([]byte(data), &msg); err != nil {
-			transport.dispatchError(err)
-			continue
+			messageErr := fmt.Errorf("mcp: decode SSE message: %w", err)
+			transport.failPending(messageErr)
+			transport.dispatchError(messageErr)
+			return
+		}
+		if msg.JSONRPC != "2.0" {
+			messageErr := fmt.Errorf("mcp: invalid SSE JSON-RPC version %q", msg.JSONRPC)
+			transport.failPending(messageErr)
+			transport.dispatchError(messageErr)
+			return
 		}
 		transport.dispatchMessage(msg)
 	}
 }
 
 func (transport *RelativeSSETransport) setEndpoint(endpoint string) {
-	resolvedEndpoint := transport.resolveEndpoint(endpoint)
+	resolvedEndpoint, err := transport.resolveEndpoint(endpoint)
+	if err != nil {
+		transport.failEndpoint(err)
+		transport.failPending(err)
+		transport.dispatchError(err)
+		return
+	}
 	transport.mu.Lock()
+	if transport.endpointErr != nil {
+		transport.mu.Unlock()
+		return
+	}
 	first := transport.Endpoint == ""
 	transport.Endpoint = resolvedEndpoint
 	transport.mu.Unlock()
-	if first && transport.endpointReady != nil {
-		close(transport.endpointReady)
+	if first {
+		transport.signalEndpointReady()
 	}
 }
 
-func (transport *RelativeSSETransport) resolveEndpoint(endpoint string) string {
-	parsedEndpoint, err := url.Parse(endpoint)
-	if err == nil && parsedEndpoint.IsAbs() {
-		return endpoint
+func (transport *RelativeSSETransport) resolveEndpoint(endpoint string) (string, error) {
+	parsedEndpoint, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return "", fmt.Errorf("mcp: invalid SSE message endpoint: %w", err)
 	}
 	baseURL, err := url.Parse(transport.URL)
 	if err != nil {
-		return endpoint
+		return "", fmt.Errorf("mcp: invalid SSE base URL: %w", err)
 	}
-	return baseURL.ResolveReference(parsedEndpoint).String()
+	resolvedEndpoint := baseURL.ResolveReference(parsedEndpoint)
+	if !strings.EqualFold(baseURL.Scheme, resolvedEndpoint.Scheme) || !strings.EqualFold(baseURL.Host, resolvedEndpoint.Host) {
+		return "", fmt.Errorf("mcp: SSE message endpoint must use the same origin as the SSE URL")
+	}
+	return resolvedEndpoint.String(), nil
+}
+
+func (transport *RelativeSSETransport) failEndpoint(err error) {
+	transport.mu.Lock()
+	if transport.Endpoint != "" {
+		transport.mu.Unlock()
+		return
+	}
+	if transport.endpointErr == nil {
+		transport.endpointErr = err
+	}
+	transport.mu.Unlock()
+	transport.signalEndpointReady()
+}
+
+func (transport *RelativeSSETransport) signalEndpointReady() {
+	transport.mu.Lock()
+	ready := transport.endpointReady
+	transport.mu.Unlock()
+	if ready != nil {
+		transport.endpointOnce.Do(func() { close(ready) })
+	}
 }
 
 func (transport *RelativeSSETransport) dispatchMessage(msg mcp.JSONRPCMessage) {
 	transport.mu.Lock()
+	if transport.terminalErr != nil {
+		transport.mu.Unlock()
+		return
+	}
+	if msg.ID != nil {
+		delete(transport.pending, pendingKeyForID(msg.ID))
+	}
 	fn := transport.onMessage
 	transport.mu.Unlock()
 	if fn != nil {
 		fn(msg)
 	}
+}
+
+func (transport *RelativeSSETransport) trackPending(msg mcp.JSONRPCMessage) (string, bool, error) {
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	if transport.terminalErr != nil {
+		return "", false, transport.terminalErr
+	}
+	if msg.ID == nil || msg.Method == "" {
+		return "", false, nil
+	}
+	key := pendingKeyForID(msg.ID)
+	if transport.pending == nil {
+		transport.pending = make(map[string]any)
+	}
+	transport.pending[key] = msg.ID
+	return key, true, nil
+}
+
+func (transport *RelativeSSETransport) removePending(key string) {
+	transport.mu.Lock()
+	delete(transport.pending, key)
+	transport.mu.Unlock()
+}
+
+func (transport *RelativeSSETransport) failPending(err error) {
+	if err == nil {
+		return
+	}
+	transport.mu.Lock()
+	if transport.terminalErr == nil {
+		transport.terminalErr = err
+	}
+	ids := make([]any, 0, len(transport.pending))
+	for key, id := range transport.pending {
+		ids = append(ids, id)
+		delete(transport.pending, key)
+	}
+	fn := transport.onMessage
+	transport.mu.Unlock()
+	if fn == nil {
+		return
+	}
+	for _, id := range ids {
+		fn(mcp.JSONRPCMessage{
+			JSONRPC: "2.0",
+			ID:      id,
+			RPCError: &mcp.JSONRPCError{
+				Code:    mcp.ErrCodeServerError,
+				Message: err.Error(),
+			},
+		})
+	}
+}
+
+func pendingKeyForID(id any) string {
+	return fmt.Sprint(id)
+}
+
+func closeResponseBody(body io.Closer) error {
+	if body == nil {
+		return nil
+	}
+	if err := body.Close(); err != nil {
+		return fmt.Errorf("mcp: close response body: %w", err)
+	}
+	return nil
 }
 
 func (transport *RelativeSSETransport) dispatchClose() {
