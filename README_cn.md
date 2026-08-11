@@ -103,7 +103,22 @@ options := agent.RunOptions{
 - `pkg/agent`: 核心引擎接口与实现。
 - `pkg/model/goai`: 使用 `goai` 库实现的 LLM 适配器。
 - `pkg/tools`: 内置工具，包括 MCP、Prompt 管理和 Skill 系统。
+- `examples/demo`: 可运行的演示包，覆盖 Execute、Stream、Tools、Skills、Chat 与 MCP。
 - `test`: 集成测试与使用示例。
+
+## 演示包
+
+配置好 `.env` 后，可运行演示包：
+
+```bash
+go run ./examples/demo -mode=hello
+go run ./examples/demo -mode=stream
+go run ./examples/demo -mode=tools
+go run ./examples/demo -mode=skills
+go run ./examples/demo -mode=chat
+```
+
+MCP 配置与 prompt 覆盖说明见 `examples/demo/README.md`。
 
 ## 测试
 

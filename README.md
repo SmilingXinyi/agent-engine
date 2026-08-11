@@ -93,7 +93,22 @@ Use `response.ToolCalls` for persistence or auditing, not as a second logging pa
 - `pkg/agent`: Core engine interfaces and implementation.
 - `pkg/model/goai`: LLM adapter using the `goai` library.
 - `pkg/tools`: Built-in tools including MCP, Prompt management, and Skills.
+- `examples/demo`: Runnable demo package for execute, stream, tools, skills, chat, and MCP.
 - `test`: Integration tests and usage examples.
+
+## Demo Package
+
+After configuring `.env`, run the demo package:
+
+```bash
+go run ./examples/demo -mode=hello
+go run ./examples/demo -mode=stream
+go run ./examples/demo -mode=tools
+go run ./examples/demo -mode=skills
+go run ./examples/demo -mode=chat
+```
+
+See `examples/demo/README.md` for MCP setup and prompt overrides.
 
 ## Testing
 
