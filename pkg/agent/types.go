@@ -11,10 +11,11 @@ const DefaultMaxSteps = 20
 
 // ModelConfig describes the model endpoint used by an agent run.
 type ModelConfig struct {
-	Provider string
-	APIKey   string
-	BaseURL  string
-	Name     string
+	Provider        string
+	APIKey          string
+	BaseURL         string
+	Name            string
+	DisableThinking bool
 }
 
 // Engine executes portable agent requests without owning session or workspace state.
@@ -45,10 +46,12 @@ type StreamRequest struct {
 // Response describes the final result of an agent run.
 type Response struct {
 	Text      string
+	Thinking  string
 	Messages  []Message
 	ToolCalls []ToolCallRecord
 	Usage     *Usage
 	Metadata  map[string]string
+	Model     *ModelInfo
 }
 
 // RunOptions describes stable runtime controls for an agent run.
@@ -57,7 +60,36 @@ type RunOptions struct {
 	Temperature     *float64
 	MaxOutputTokens *int
 	EventHandler    EventHandler
+	// OnBeforeToolExecute runs before a known tool's handler. It can inspect
+	// the call, replace its input/context, or skip execution with a result.
+	OnBeforeToolExecute BeforeToolExecuteHook
+	// StopOnToolNames stops the tool loop when a tool with any of these names
+	// is called. The tool call and its result are included in the response
+	// Messages for the caller to handle. Nil-handler ("external") tools are
+	// added to this stop condition automatically.
+	StopOnToolNames []string
 }
+
+// BeforeToolExecuteInfo describes a tool call before its handler executes.
+type BeforeToolExecuteInfo struct {
+	Ctx        context.Context
+	ToolCallID string
+	ToolName   string
+	Step       int
+	Input      json.RawMessage
+}
+
+// BeforeToolExecuteResult controls whether and how a tool executes.
+type BeforeToolExecuteResult struct {
+	Skip   bool
+	Result string
+	Error  error
+	Ctx    context.Context
+	Input  json.RawMessage
+}
+
+// BeforeToolExecuteHook is called before a known tool's Execute function.
+type BeforeToolExecuteHook func(BeforeToolExecuteInfo) BeforeToolExecuteResult
 
 // Role identifies the source or purpose of a message.
 type Role string
@@ -178,6 +210,11 @@ type StreamHandler interface {
 	OnText(ctx context.Context, chunk string) error
 }
 
+// ThinkingStreamHandler optionally receives thinking chunks from a streaming agent run.
+type ThinkingStreamHandler interface {
+	OnThinking(ctx context.Context, chunk string) error
+}
+
 // StreamHandlerFunc adapts a function into a StreamHandler.
 type StreamHandlerFunc func(context.Context, string) error
 
@@ -237,7 +274,16 @@ type ToolCallFinishEvent struct {
 
 // Usage describes token or cost information returned by a model provider when available.
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
+	InputTokens      int
+	OutputTokens     int
+	TotalTokens      int
+	ReasoningTokens  int
+	CacheReadTokens  int
+	CacheWriteTokens int
+}
+
+// ModelInfo describes the provider-level identity of the model that handled a request.
+type ModelInfo struct {
+	ModelID   string
+	RequestID string
 }

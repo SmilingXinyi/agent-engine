@@ -33,14 +33,20 @@ func TestDefaultRequestValidatorValidateRequest(t *testing.T) {
 			wantError: "",
 		},
 		{
-			name:      "valid missing provider",
-			mutate:    func(request *Request) { request.ModelConfig.Provider = "" },
-			wantError: "",
+			name: "missing system prompt and user prompt",
+			mutate: func(request *Request) {
+				request.SystemPrompt = ""
+				request.UserPrompt = ""
+			},
+			wantError: "system prompt or user prompt is required",
 		},
 		{
-			name:      "missing user prompt",
-			mutate:    func(request *Request) { request.UserPrompt = "" },
-			wantError: "user prompt is required",
+			name: "system prompt without user prompt",
+			mutate: func(request *Request) {
+				request.SystemPrompt = "system"
+				request.UserPrompt = ""
+			},
+			wantError: "",
 		},
 		{
 			name:      "negative max steps",
@@ -55,11 +61,18 @@ func TestDefaultRequestValidatorValidateRequest(t *testing.T) {
 			wantError: "tool name is required",
 		},
 		{
-			name: "missing tool handler",
+			name: "nil handler is valid external stub",
 			mutate: func(request *Request) {
 				request.Tools = []Tool{{Name: "read_file"}}
 			},
-			wantError: "tool handler is required: read_file",
+			wantError: "",
+		},
+		{
+			name: "tool name with surrounding whitespace",
+			mutate: func(request *Request) {
+				request.Tools = []Tool{{Name: " read_file"}}
+			},
+			wantError: "surrounding whitespace",
 		},
 		{
 			name: "duplicate tool name",
@@ -93,5 +106,14 @@ func TestDefaultRequestValidatorValidateRequest(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", test.wantError, err)
 			}
 		})
+	}
+}
+
+func TestDefaultRequestValidatorReturnsContextError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := (defaultRequestValidator{}).ValidateRequest(ctx, Request{})
+	if err != context.Canceled {
+		t.Fatalf("expected context cancellation, got %v", err)
 	}
 }

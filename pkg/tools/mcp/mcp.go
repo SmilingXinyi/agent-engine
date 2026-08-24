@@ -76,8 +76,7 @@ func StartMCPRuntime(ctx context.Context, config MCPConfig) (*MCPRuntime, error)
 		server := config.Servers[name]
 		client, tools, err := startMCPServer(ctx, name, server)
 		if err != nil {
-			_ = runtime.Close()
-			return nil, err
+			return nil, errors.Join(err, wrapMCPCloseError("partially started runtime", runtime.Close()))
 		}
 		runtime.Clients = append(runtime.Clients, client)
 		runtime.Tools = append(runtime.Tools, tools...)
@@ -142,6 +141,9 @@ func isValidHTTPHeaderName(name string) bool {
 
 func buildMCPTransport(server MCPServerConfig) mcp.Transport {
 	if server.URL != "" {
+		if strings.TrimSpace(server.Transport) == "http" {
+			return mcp.NewHTTPTransport(server.URL, mcp.WithHTTPHeaders(server.Headers))
+		}
 		return NewRelativeSSETransport(server.URL, server.Headers)
 	}
 
@@ -159,18 +161,22 @@ func startMCPServer(ctx context.Context, name string, server MCPServerConfig) (*
 	transport := buildMCPTransport(server)
 	client := mcp.NewClient("agent-engine-"+name, "1.0.0", mcp.WithTransport(transport), mcp.WithRequestTimeout(60*time.Second))
 	if err := client.Connect(ctx); err != nil {
-		return nil, nil, fmt.Errorf("connect mcp server %q: %w", name, err)
+		return nil, nil, errors.Join(
+			fmt.Errorf("connect mcp server %q: %w", name, err),
+			wrapMCPCloseError(name, client.Close()),
+		)
 	}
 
 	mcpTools, err := listAllMCPTools(ctx, client)
 	if err != nil {
-		_ = client.Close()
-		return nil, nil, fmt.Errorf("list mcp tools %q: %w", name, err)
+		return nil, nil, errors.Join(
+			fmt.Errorf("list mcp tools %q: %w", name, err),
+			wrapMCPCloseError(name, client.Close()),
+		)
 	}
 	validatedTools, err := validateMCPTools(name, mcpTools)
 	if err != nil {
-		_ = client.Close()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, wrapMCPCloseError(name, client.Close()))
 	}
 	return client, convertMCPTools(client, validatedTools), nil
 }
@@ -194,11 +200,29 @@ func convertMCPTools(client *mcp.Client, mcpTools []mcp.Tool) []agent.Tool {
 				if err != nil {
 					return "", err
 				}
-				return mcp.FormatContent(result.Content, result.IsError), nil
+				return formatMCPToolResult(tool.Name, result)
 			}),
 		})
 	}
 	return tools
+}
+
+func formatMCPToolResult(toolName string, result *mcp.CallToolResult) (string, error) {
+	if result == nil {
+		return "", fmt.Errorf("mcp tool %q returned no result", toolName)
+	}
+	output := mcp.FormatContent(result.Content, result.IsError)
+	if result.IsError {
+		return output, fmt.Errorf("mcp tool %q failed: %s", toolName, output)
+	}
+	return output, nil
+}
+
+func wrapMCPCloseError(name string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("close mcp %s: %w", name, err)
 }
 
 func validateMCPTools(serverName string, tools []mcp.Tool) ([]mcp.Tool, error) {
@@ -220,6 +244,9 @@ func validateMCPTools(serverName string, tools []mcp.Tool) ([]mcp.Tool, error) {
 		}
 		var schema map[string]any
 		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
+			return nil, fmt.Errorf("mcp server %q tool %q input schema must be a json object", serverName, tool.Name)
+		}
+		if schema == nil {
 			return nil, fmt.Errorf("mcp server %q tool %q input schema must be a json object", serverName, tool.Name)
 		}
 		if schemaType, ok := schema["type"]; ok && schemaType != "object" {

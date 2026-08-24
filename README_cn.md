@@ -5,8 +5,10 @@
 ## 特性
 
 - **可移植引擎**: 与会话和工作区状态解耦，易于集成到任何 Go 应用程序中。
-- **流式支持**: 支持实时文本生成的流式输出。
-- **工具调用 (Tool Calling)**: 原生支持工具定义和自动执行。
+- **流式支持**: 支持实时文本生成的流式输出，可选 reasoning/thinking 流。
+- **工具调用 (Tool Calling)**: 原生支持工具定义和自动执行，支持外部工具桩与 `OnBeforeToolExecute` 钩子。
+- **Tool Env 注入**: 通过 `agent.WithToolEnv` 向工具调用注入隐藏参数。
+- **Debug Sink**: 可选 YAML 请求转储，便于调试 LLM 载荷。
 - **模型上下文协议 (MCP)**: 集成 MCP 以扩展 Agent 能力。
 - **事件驱动**: 提供完善的工具执行生命周期事件回调。
 - **灵活适配**: 通过 `goai` 库内置支持多种 LLM 供应商。
@@ -103,7 +105,25 @@ options := agent.RunOptions{
 - `pkg/agent`: 核心引擎接口与实现。
 - `pkg/model/goai`: 使用 `goai` 库实现的 LLM 适配器。
 - `pkg/tools`: 内置工具，包括 MCP、Prompt 管理和 Skill 系统。
+- `examples/demo`: 可运行的演示包，覆盖 Execute、Stream、Tools、Skills、Chat 与 MCP。
 - `test`: 集成测试与使用示例。
+
+## 演示包
+
+配置好 `.env` 后，可运行演示包：
+
+```bash
+go run ./examples/demo -mode=hello
+go run ./examples/demo -mode=stream
+go run ./examples/demo -mode=tools
+go run ./examples/demo -mode=skills
+go run ./examples/demo -mode=skilltool
+go run ./examples/demo -mode=thinking
+go run ./examples/demo -mode=toolenv
+go run ./examples/demo -mode=chat
+```
+
+MCP 配置与 prompt 覆盖说明见 `examples/demo/README.md`。
 
 ## 测试
 
