@@ -1,38 +1,41 @@
-# Agent Engine
+# Agent Engine Workspace
 
-A lightweight, portable, and extensible AI Agent engine written in Go.
+This repository is structured as a Go multi-module workspace using `go.work`.
 
-## Features
+## Modules
 
-- **Portable Engine**: Decoupled from session and workspace state, making it easy to integrate into any Go application.
-- **Streaming Support**: Real-time text generation with streaming chunks, including optional reasoning/thinking streams.
-- **Tool Calling**: Native support for tool definitions and execution, external tool stubs, and `OnBeforeToolExecute` hooks.
-- **Tool Environment Injection**: Inject hidden parameters into tool calls via `agent.WithToolEnv`.
-- **Debug Sink**: Optional YAML request dumps for diagnosing LLM payloads.
-- **Model Context Protocol (MCP)**: Integration with MCP for extended capabilities.
-- **Event Driven**: Comprehensive event handlers for tool execution lifecycle.
-- **Flexible Adapters**: Built-in support for multiple LLM providers via `goai`.
+- `ai-sdk`: Core AI SDK providing LLM model abstractions, streaming, tool calling, prompt building, schema generation, and agent execution loops.
+- `examples/basic`: Basic runnable example demonstrating the use of `ai-sdk`.
 
-## Installation
+## Getting Started
+
+### Prerequisites
+
+- Go 1.25.0+
+
+### Workspace Setup
+
+Initialize and sync the workspace:
 
 ```bash
-go get github.com/SmilingXinyi/agent-engine
+go work sync
 ```
 
-## Quick Start
+### Running the Example
 
-### 1. Configuration
-
-Create a `.env` file based on `.env.example`:
-
-```env
-AGENT_LLM_PROVIDER=openai
-AGENT_LLM_MODEL=gpt-4o
-AGENT_LLM_API_KEY=your_api_key
-# Optional: AGENT_LLM_BASE_URL=https://api.openai.com/v1
+```bash
+go run ./examples/basic
 ```
 
-### 2. Basic Usage (Hello World)
+### Running Tests
+
+Run unit tests across the SDK:
+
+```bash
+go test -v ./ai-sdk/...
+```
+
+## AI SDK Overview
 
 ```go
 package main
@@ -40,92 +43,33 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
 
-	"github.com/SmilingXinyi/agent-engine/pkg/agent"
-	"github.com/SmilingXinyi/agent-engine/pkg/model/goai"
-	"github.com/joho/godotenv"
+	aisdk "github.com/SmilingXinyi/agent-engine/ai-sdk"
+	"github.com/SmilingXinyi/agent-engine/ai-sdk/provider"
 )
 
 func main() {
-	_ = godotenv.Load()
-
-	engine := agent.NewEngineWithClientFactory(goai.NewClientFactory())
-	// Or: agent.NewEngine(agent.WithProvider(goai.NewClientFactory()))
-	
 	ctx := context.Background()
-	response, err := engine.Execute(ctx, agent.Request{
-		ModelConfig: agent.ModelConfig{
-			Provider: os.Getenv("AGENT_LLM_PROVIDER"),
-			APIKey:   os.Getenv("AGENT_LLM_API_KEY"),
-			BaseURL:  os.Getenv("AGENT_LLM_BASE_URL"),
-			Name:     os.Getenv("AGENT_LLM_MODEL"),
-		},
-		UserPrompt: "Hello, world!",
+
+	// Initialize OpenAI or compatible provider
+	p := provider.NewOpenAIProvider(provider.Config{
+		APIKey:  "your-api-key",
+		BaseURL: "https://api.openai.com/v1",
 	})
 
+	m, err := p.Model("gpt-4o")
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
 
-	fmt.Printf("Response: %s\n", response.Text)
+	text, err := aisdk.GenerateText(ctx, m, "Hello!")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(text)
 }
 ```
-
-## Tool Call Logging
-
-Keep tool logs in `RunOptions.EventHandler` only. Do not duplicate logging in tool handlers or by iterating `response.ToolCalls` after the request completes.
-
-```go
-options := agent.RunOptions{
-    EventHandler: agent.StdoutToolEventHandler(),
-}
-```
-
-Lifecycle messages:
-
-- Start: `calling tool: <name>`
-- Success: `tool done: <name>`
-- Failure: `tool error: <name> <err>`
-
-Use `response.ToolCalls` for persistence or auditing, not as a second logging path.
-
-## Project Structure
-
-- `pkg/agent`: Core engine interfaces and implementation.
-- `pkg/model/goai`: LLM adapter using the `goai` library.
-- `pkg/tools`: Built-in tools including MCP, Prompt management, and Skills.
-- `examples/demo`: Runnable demo package for execute, stream, tools, skills, chat, and MCP.
-- `test`: Integration tests and usage examples.
-
-## Demo Package
-
-After configuring `.env`, run the demo package:
-
-```bash
-go run ./examples/demo -mode=hello
-go run ./examples/demo -mode=stream
-go run ./examples/demo -mode=tools
-go run ./examples/demo -mode=skills
-go run ./examples/demo -mode=skilltool
-go run ./examples/demo -mode=thinking
-go run ./examples/demo -mode=toolenv
-go run ./examples/demo -mode=chat
-```
-
-See `examples/demo/README.md` for MCP setup and prompt overrides.
-
-## Testing
-
-Run all tests:
-```bash
-go test ./...
-```
-
-To run integration tests with real LLM requests:
-1. Set `AGENT_ENGINE_INTEGRATION_TEST=1` in your `.env`.
-2. Run `go test -v ./test/...`.
 
 ## License
 
