@@ -1,11 +1,10 @@
-// Package aisdk provides a provider-neutral model call contract without an
+// Package ai provides a provider-neutral model call contract without an
 // agent loop. It is independent from the archived pkg/ai-temp runtime.
-package aisdk
+package ai
 
 import (
 	"context"
 	"encoding/json"
-	"strings"
 )
 
 // Role identifies who produced a Message.
@@ -62,55 +61,6 @@ type Message struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// TextMessage builds a Message with a single text ContentPart.
-func TextMessage(role Role, text string) Message {
-	return Message{Role: role, Parts: []ContentPart{{Type: ContentText, Text: text}}}
-}
-
-// Text concatenates all text ContentParts in the Message.
-func (message Message) Text() string {
-	var result strings.Builder
-	for _, part := range message.Parts {
-		if part.Type == ContentText {
-			result.WriteString(part.Text)
-		}
-	}
-	return result.String()
-}
-
-// Reasoning concatenates all reasoning ContentParts in the Message.
-func (message Message) Reasoning() string {
-	var result strings.Builder
-	for _, part := range message.Parts {
-		if part.Type == ContentReasoning {
-			result.WriteString(part.Text)
-		}
-	}
-	return result.String()
-}
-
-// ToolCalls extracts all tool call ContentParts from the Message.
-func (message Message) ToolCalls() []ToolCall {
-	var calls []ToolCall
-	for _, part := range message.Parts {
-		if part.Type == ContentToolCall && part.ToolCall != nil {
-			calls = append(calls, cloneToolCall(*part.ToolCall))
-		}
-	}
-	return calls
-}
-
-// ToolResults extracts all tool result ContentParts from the Message.
-func (message Message) ToolResults() []ToolResult {
-	var results []ToolResult
-	for _, part := range message.Parts {
-		if part.Type == ContentToolResult && part.ToolResult != nil {
-			results = append(results, cloneToolResult(*part.ToolResult))
-		}
-	}
-	return results
-}
-
 // ToolCall is a model-issued request to invoke a tool. It carries no
 // execution behavior; callers decide how to fulfill it.
 type ToolCall struct {
@@ -127,22 +77,6 @@ type ToolResult struct {
 	Content    []ContentPart  `json:"content"`
 	IsError    bool           `json:"is_error,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
-}
-
-// TextToolResult builds a ToolResult with a single text ContentPart.
-func TextToolResult(text string) ToolResult {
-	return ToolResult{Content: []ContentPart{{Type: ContentText, Text: text}}}
-}
-
-// Text concatenates all text ContentParts in the ToolResult.
-func (result ToolResult) Text() string {
-	var text strings.Builder
-	for _, part := range result.Content {
-		if part.Type == ContentText {
-			text.WriteString(part.Text)
-		}
-	}
-	return text.String()
 }
 
 // ToolDefinition describes a tool available to the model. It carries no
@@ -240,54 +174,11 @@ type EventSink interface {
 // EventSinkFunc adapts a function to the EventSink interface.
 type EventSinkFunc func(context.Context, StreamEvent) error
 
-// OnEvent invokes the underlying function, treating a nil receiver as a no-op.
-func (sink EventSinkFunc) OnEvent(ctx context.Context, event StreamEvent) error {
-	if sink == nil {
-		return nil
-	}
-	return sink(ctx, event)
-}
-
-func cloneToolCall(call ToolCall) ToolCall {
-	call.Arguments = append(json.RawMessage(nil), call.Arguments...)
-	return call
-}
-
-func cloneToolResult(result ToolResult) ToolResult {
-	result.Content = cloneContentParts(result.Content)
-	result.Metadata = cloneAnyMap(result.Metadata)
-	return result
-}
-
-func cloneContentParts(parts []ContentPart) []ContentPart {
-	result := make([]ContentPart, len(parts))
-	for index, part := range parts {
-		result[index] = part
-		result[index].Metadata = cloneAnyMap(part.Metadata)
-		result[index].Data = append(json.RawMessage(nil), part.Data...)
-		if part.Media != nil {
-			media := *part.Media
-			result[index].Media = &media
-		}
-		if part.ToolCall != nil {
-			call := cloneToolCall(*part.ToolCall)
-			result[index].ToolCall = &call
-		}
-		if part.ToolResult != nil {
-			toolResult := cloneToolResult(*part.ToolResult)
-			result[index].ToolResult = &toolResult
-		}
-	}
-	return result
-}
-
-func cloneAnyMap(source map[string]any) map[string]any {
-	if source == nil {
-		return nil
-	}
-	result := make(map[string]any, len(source))
-	for key, value := range source {
-		result[key] = value
-	}
-	return result
+// Provider maps the common ModelRequest and ModelResponse format to one AI
+// service. Implementations without native incremental output can synthesize
+// StreamEvents from a Generate result using EmitModelResponse.
+type Provider interface {
+	Name() string
+	Generate(ctx context.Context, request ModelRequest) (ModelResponse, error)
+	Stream(ctx context.Context, request ModelRequest, sink EventSink) (ModelResponse, error)
 }
