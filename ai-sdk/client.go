@@ -1,0 +1,78 @@
+package ai
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+)
+
+// Client invokes a Provider and owns the model-call lifecycle hooks. It has
+// no loop and no tool execution: exactly one Provider call per Generate or
+// Stream invocation.
+type Client struct {
+	provider Provider
+	hooks    Hooks
+}
+
+// NewClient builds a Client bound to one Provider and its Hooks.
+func NewClient(provider Provider, hooks Hooks) *Client {
+	return &Client{provider: provider, hooks: hooks}
+}
+
+// Generate performs one non-streaming model call.
+func (client *Client) Generate(ctx context.Context, request ModelRequest) (ModelResponse, error) {
+	return client.call(ctx, request, nil, false)
+}
+
+// Stream performs one model call, delivering incremental output to sink.
+func (client *Client) Stream(ctx context.Context, request ModelRequest, sink EventSink) (ModelResponse, error) {
+	return client.call(ctx, request, sink, true)
+}
+
+func (client *Client) call(ctx context.Context, request ModelRequest, sink EventSink, streaming bool) (response ModelResponse, err error) {
+	if client == nil || client.provider == nil {
+		return ModelResponse{}, errors.New("ai-sdk provider is required")
+	}
+
+	providerName := client.provider.Name()
+	requestID := ""
+	if request.Metadata != nil {
+		requestID = request.Metadata[RequestIDMetadataKey]
+	}
+	requestInfo := RequestInfo{Provider: providerName, Request: request, RequestID: requestID, Timestamp: time.Now()}
+	for index, hook := range client.hooks.OnRequest {
+		if hook == nil {
+			continue
+		}
+		if hookErr := callRequestHook(ctx, hook, requestInfo); hookErr != nil {
+			return ModelResponse{}, fmt.Errorf("request hook %d: %w", index, hookErr)
+		}
+	}
+
+	startedAt := time.Now()
+	if streaming {
+		response, err = client.provider.Stream(ctx, request, sink)
+	} else {
+		response, err = client.provider.Generate(ctx, request)
+	}
+	finishedAt := time.Now()
+
+	responseInfo := ResponseInfo{
+		Provider:  providerName,
+		Request:   request,
+		RequestID: requestID,
+		Response:  response,
+		Duration:  finishedAt.Sub(startedAt),
+		Error:     err,
+	}
+	for index, hook := range client.hooks.OnResponse {
+		if hook == nil {
+			continue
+		}
+		if hookErr := callResponseHook(ctx, hook, responseInfo); hookErr != nil {
+			err = errors.Join(err, fmt.Errorf("response hook %d: %w", index, hookErr))
+		}
+	}
+	return response, err
+}

@@ -22,3 +22,14 @@ Traditional Go community guidelines enforce strict naming conventions (e.g., low
 - The repository uses Go workspaces (`go.work`) to manage multiple modular packages.
 - Modules should remain clean, decoupled, and focused on their distinct responsibilities.
 - The `ai-sdk` module acts as the core SDK package for AI model interaction, tool calling, and agent workflows.
+
+## 3. Type Definitions and Function Placement
+
+Type declarations should be readable at a glance, similar to a TypeScript `.d.ts` file. Keep definitions and behavior separated as follows.
+
+- `ai-sdk/types.go` contains only type declarations, constants, and interfaces. Do not add functions or methods here.
+- `ai-sdk/methods.go` contains all methods, constructors (e.g. `TextMessage`), and package-private helpers (e.g. `cloneToolCall`) for the `ai` package.
+- `ai-sdk/utils/` contains general-purpose helpers that do not depend on `ai` types (e.g. generic `CloneMap`). `ai` may import `utils`, but `utils` must never import `ai`, or an import cycle appears.
+- Provider implementations live under `ai-sdk/providers/<name>/`.
+- Go requires methods to be declared in the same package as their receiver type, so methods cannot move into a subdirectory package.
+- Do not create a new file in the same directory for a single function. Add it to `methods.go`, or move it to `utils/` if it is type-independent.
