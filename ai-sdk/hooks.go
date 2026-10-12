@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"time"
+
+	"github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
 // RequestIDMetadataKey is the conventional metadata key used to correlate
@@ -12,7 +14,7 @@ const RequestIDMetadataKey = "request_id"
 // RequestInfo describes one model call before it is sent to the Provider.
 type RequestInfo struct {
 	Provider  string
-	Request   ModelRequest
+	Request   protocol.ModelRequest
 	RequestID string
 	Timestamp time.Time
 }
@@ -20,9 +22,9 @@ type RequestInfo struct {
 // ResponseInfo describes the outcome of one model call.
 type ResponseInfo struct {
 	Provider  string
-	Request   ModelRequest
+	Request   protocol.ModelRequest
 	RequestID string
-	Response  ModelResponse
+	Response  protocol.ModelResponse
 	Duration  time.Duration
 	Error     error
 }

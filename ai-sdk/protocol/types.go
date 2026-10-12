@@ -1,6 +1,6 @@
-// Package ai provides a provider-neutral model call contract without an
-// agent loop. It is independent from the archived pkg/ai-temp runtime.
-package ai
+// Package protocol is the provider-neutral contract for one model call.
+// It has no client, no hooks, and no agent loop.
+package protocol
 
 import (
 	"context"

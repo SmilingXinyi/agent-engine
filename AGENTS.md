@@ -27,9 +27,10 @@ Traditional Go community guidelines enforce strict naming conventions (e.g., low
 
 Type declarations should be readable at a glance, similar to a TypeScript `.d.ts` file. Keep definitions and behavior separated as follows.
 
-- `ai-sdk/types.go` contains only type declarations, constants, and interfaces. Do not add functions or methods here.
-- `ai-sdk/methods.go` contains all methods, constructors (e.g. `TextMessage`), and package-private helpers (e.g. `cloneToolCall`) for the `ai` package.
-- `ai-sdk/utils/` contains general-purpose helpers that do not depend on `ai` types (e.g. generic `CloneMap`). `ai` may import `utils`, but `utils` must never import `ai`, or an import cycle appears.
-- Provider implementations live under `ai-sdk/providers/<name>/`.
-- Go requires methods to be declared in the same package as their receiver type, so methods cannot move into a subdirectory package.
-- Do not create a new file in the same directory for a single function. Add it to `methods.go`, or move it to `utils/` if it is type-independent.
+- `ai-sdk/protocol/types.go` contains the provider-neutral model-call contract: type declarations, constants, and interfaces only. Do not add functions or methods here.
+- `ai-sdk/protocol/methods.go` contains methods, constructors (e.g. `TextMessage`), and package-private helpers (e.g. `cloneToolCall`) for those types.
+- `ai-sdk/client.go` and `ai-sdk/hooks.go` own one model call's lifecycle. They import `protocol` and do not re-export its types.
+- `ai-sdk/utils/` contains general-purpose helpers that do not depend on `protocol` types (e.g. generic `CloneMap`). `protocol` may import `utils`, but `utils` must never import `protocol` or `ai`, or an import cycle appears.
+- Provider implementations live under `ai-sdk/providers/<name>/` and depend on `protocol`, not on the client.
+- Go requires methods to be declared in the same package as their receiver type, so protocol methods stay in package `protocol`.
+- Do not create a new file in the same directory for a single function. Add it to that package's `methods.go`, or move it to `utils/` if it is type-independent.

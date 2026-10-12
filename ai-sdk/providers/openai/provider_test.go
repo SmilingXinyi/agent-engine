@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/SmilingXinyi/agent-engine/ai-sdk"
+	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -53,10 +53,10 @@ func TestProviderGenerateMapsRequestAndResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	response, err := provider.Generate(context.Background(), core.ModelRequest{
+	response, err := provider.Generate(context.Background(), protocol.ModelRequest{
 		Model:    "model-1",
-		Messages: []core.Message{core.TextMessage(core.RoleUser, "hi")},
-		Tools: []core.ToolDefinition{{
+		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
+		Tools: []protocol.ToolDefinition{{
 			Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`),
 		}},
 		ProviderOptions: map[string]any{"reasoning_effort": "high"},
@@ -70,7 +70,7 @@ func TestProviderGenerateMapsRequestAndResponse(t *testing.T) {
 	if response.Usage.TotalTokens != 5 || response.Usage.ReasoningTokens != 1 {
 		t.Fatalf("usage = %#v", response.Usage)
 	}
-	if response.Metadata["request_id"] != "req-1" || response.FinishReason != core.FinishStop {
+	if response.Metadata["request_id"] != "req-1" || response.FinishReason != protocol.FinishStop {
 		t.Fatalf("response = %#v", response)
 	}
 }
@@ -114,14 +114,14 @@ func TestResponsesProviderGenerateMapsRequestAndResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	response, err := provider.Generate(context.Background(), core.ModelRequest{
+	response, err := provider.Generate(context.Background(), protocol.ModelRequest{
 		Model: "model-1",
-		Messages: []core.Message{
-			core.TextMessage(core.RoleSystem, "be concise"),
-			core.TextMessage(core.RoleUser, "hi"),
+		Messages: []protocol.Message{
+			protocol.TextMessage(protocol.RoleSystem, "be concise"),
+			protocol.TextMessage(protocol.RoleUser, "hi"),
 		},
 		MaxOutputTokens: func() *int { value := 12; return &value }(),
-		Tools:           []core.ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		Tools:           []protocol.ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}},
 	})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
@@ -132,15 +132,15 @@ func TestResponsesProviderGenerateMapsRequestAndResponse(t *testing.T) {
 	if response.Usage.TotalTokens != 5 || response.Usage.ReasoningTokens != 1 {
 		t.Fatalf("usage = %#v", response.Usage)
 	}
-	if response.Metadata["request_id"] != "resp-1" || response.FinishReason != core.FinishStop {
+	if response.Metadata["request_id"] != "resp-1" || response.FinishReason != protocol.FinishStop {
 		t.Fatalf("response = %#v", response)
 	}
 }
 
 func TestResponsesRequestMapsDisabledThinkingToNoReasoning(t *testing.T) {
-	payload, err := buildResponsesRequest(core.ModelRequest{
+	payload, err := buildResponsesRequest(protocol.ModelRequest{
 		Model:    "model-1",
-		Messages: []core.Message{core.TextMessage(core.RoleUser, "hi")},
+		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 		ProviderOptions: map[string]any{
 			"thinking": map[string]any{"type": "disabled"},
 		},
@@ -190,10 +190,10 @@ func TestResponsesProviderStreamAccumulatesTypedEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	var events []core.StreamEventType
-	response, err := provider.Stream(context.Background(), core.ModelRequest{
-		Model: "model-1", Messages: []core.Message{core.TextMessage(core.RoleUser, "hi")},
-	}, core.EventSinkFunc(func(_ context.Context, event core.StreamEvent) error {
+	var events []protocol.StreamEventType
+	response, err := provider.Stream(context.Background(), protocol.ModelRequest{
+		Model: "model-1", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
+	}, protocol.EventSinkFunc(func(_ context.Context, event protocol.StreamEvent) error {
 		events = append(events, event.Type)
 		return nil
 	}))
@@ -207,12 +207,12 @@ func TestResponsesProviderStreamAccumulatesTypedEvents(t *testing.T) {
 	if len(calls) != 1 || calls[0].ID != "call-1" || calls[0].Name != "lookup" || string(calls[0].Arguments) != `{"city":"BJ"}` {
 		t.Fatalf("calls = %#v", calls)
 	}
-	if response.FinishReason != core.FinishToolCalls || response.Usage.TotalTokens != 7 {
+	if response.FinishReason != protocol.FinishToolCalls || response.Usage.TotalTokens != 7 {
 		t.Fatalf("response = %#v", response)
 	}
-	wantEvents := []core.StreamEventType{
-		core.EventTextDelta, core.EventToolCallDelta, core.EventToolCallDelta,
-		core.EventToolCallDelta, core.EventUsage,
+	wantEvents := []protocol.StreamEventType{
+		protocol.EventTextDelta, protocol.EventToolCallDelta, protocol.EventToolCallDelta,
+		protocol.EventToolCallDelta, protocol.EventUsage,
 	}
 	if !reflect.DeepEqual(events, wantEvents) {
 		t.Fatalf("events = %#v, want %#v", events, wantEvents)
@@ -244,10 +244,10 @@ func TestProviderStreamAccumulatesTextReasoningAndToolCallDeltas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	var events []core.StreamEventType
-	response, err := provider.Stream(context.Background(), core.ModelRequest{
-		Model: "model-1", Messages: []core.Message{core.TextMessage(core.RoleUser, "hi")},
-	}, core.EventSinkFunc(func(_ context.Context, event core.StreamEvent) error {
+	var events []protocol.StreamEventType
+	response, err := provider.Stream(context.Background(), protocol.ModelRequest{
+		Model: "model-1", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
+	}, protocol.EventSinkFunc(func(_ context.Context, event protocol.StreamEvent) error {
 		events = append(events, event.Type)
 		return nil
 	}))
@@ -261,16 +261,16 @@ func TestProviderStreamAccumulatesTextReasoningAndToolCallDeltas(t *testing.T) {
 	if len(calls) != 1 || calls[0].ID != "call-1" || calls[0].Name != "lookup" || string(calls[0].Arguments) != `{"city":"BJ"}` {
 		t.Fatalf("calls = %#v", calls)
 	}
-	if response.FinishReason != core.FinishToolCalls || response.Usage.TotalTokens != 7 {
+	if response.FinishReason != protocol.FinishToolCalls || response.Usage.TotalTokens != 7 {
 		t.Fatalf("response = %#v", response)
 	}
 	if got := response.Metadata["provider"]; got != "deepseek" {
 		t.Fatalf("provider metadata = %q", got)
 	}
-	wantEvents := []core.StreamEventType{
-		core.EventTextDelta, core.EventReasoningDelta,
-		core.EventTextDelta, core.EventReasoningDelta, core.EventToolCallDelta,
-		core.EventToolCallDelta, core.EventUsage,
+	wantEvents := []protocol.StreamEventType{
+		protocol.EventTextDelta, protocol.EventReasoningDelta,
+		protocol.EventTextDelta, protocol.EventReasoningDelta, protocol.EventToolCallDelta,
+		protocol.EventToolCallDelta, protocol.EventUsage,
 	}
 	if !reflect.DeepEqual(events, wantEvents) {
 		t.Fatalf("events = %#v, want %#v", events, wantEvents)
@@ -278,9 +278,9 @@ func TestProviderStreamAccumulatesTextReasoningAndToolCallDeltas(t *testing.T) {
 }
 
 func TestBuildRequestRejectsProviderOptionThatOverridesCommonField(t *testing.T) {
-	_, err := buildRequest(core.ModelRequest{
+	_, err := buildRequest(protocol.ModelRequest{
 		Model:           "model-1",
-		Messages:        []core.Message{core.TextMessage(core.RoleUser, "hi")},
+		Messages:        []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 		ProviderOptions: map[string]any{"stream": false},
 	}, true)
 	if err == nil || !strings.Contains(err.Error(), `provider option "stream"`) {
@@ -290,9 +290,9 @@ func TestBuildRequestRejectsProviderOptionThatOverridesCommonField(t *testing.T)
 
 func TestBuildRequestPreservesExtraBodyThinkingOption(t *testing.T) {
 	extraBody := map[string]any{"thinking": map[string]any{"type": "enabled"}}
-	payload, err := buildRequest(core.ModelRequest{
+	payload, err := buildRequest(protocol.ModelRequest{
 		Model:           "model-1",
-		Messages:        []core.Message{core.TextMessage(core.RoleUser, "hi")},
+		Messages:        []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 		ProviderOptions: map[string]any{"extra_body": extraBody},
 	}, false)
 	if err != nil {
@@ -312,7 +312,7 @@ func TestProviderStreamRequiresDoneMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := provider.Stream(context.Background(), core.ModelRequest{Model: "m", Messages: []core.Message{core.TextMessage(core.RoleUser, "hi")}}, nil)
+	response, err := provider.Stream(context.Background(), protocol.ModelRequest{Model: "m", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "without [DONE]") {
 		t.Fatalf("err=%v response=%#v", err, response)
 	}
@@ -331,7 +331,7 @@ func TestProviderRetriesTransientStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := provider.Generate(context.Background(), core.ModelRequest{Model: "m", Messages: []core.Message{core.TextMessage(core.RoleUser, "hi")}})
+	response, err := provider.Generate(context.Background(), protocol.ModelRequest{Model: "m", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")}})
 	if err != nil || response.Message.Text() != "ok" || attempts != 3 {
 		t.Fatalf("attempts=%d response=%#v err=%v", attempts, response, err)
 	}
@@ -345,7 +345,7 @@ func TestProviderRejectsOversizedResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = provider.Generate(context.Background(), core.ModelRequest{Model: "m", Messages: []core.Message{core.TextMessage(core.RoleUser, "hi")}})
+	_, err = provider.Generate(context.Background(), protocol.ModelRequest{Model: "m", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")}})
 	if err == nil {
 		t.Fatal("expected oversized response error")
 	}
@@ -390,8 +390,8 @@ func TestProviderGenerateMetadataUsesConfiguredName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := provider.Generate(context.Background(), core.ModelRequest{
-		Model: "model", Messages: []core.Message{core.TextMessage(core.RoleUser, "hi")},
+	response, err := provider.Generate(context.Background(), protocol.ModelRequest{
+		Model: "model", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 	})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
@@ -402,7 +402,7 @@ func TestProviderGenerateMetadataUsesConfiguredName(t *testing.T) {
 }
 
 func TestEncodeImagePartPrefersFileIDOverURL(t *testing.T) {
-	part, err := encodeImagePart(&core.MediaContent{FileID: "file-abc", URL: "https://example.com/x.png"})
+	part, err := encodeImagePart(&protocol.MediaContent{FileID: "file-abc", URL: "https://example.com/x.png"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +412,7 @@ func TestEncodeImagePartPrefersFileIDOverURL(t *testing.T) {
 }
 
 func TestEncodeImagePartIncludesDetailWhenSet(t *testing.T) {
-	part, err := encodeImagePart(&core.MediaContent{URL: "https://example.com/x.png", Detail: "low"})
+	part, err := encodeImagePart(&protocol.MediaContent{URL: "https://example.com/x.png", Detail: "low"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestEncodeImagePartIncludesDetailWhenSet(t *testing.T) {
 }
 
 func TestEncodeImagePartOmitsDetailWhenEmpty(t *testing.T) {
-	part, err := encodeImagePart(&core.MediaContent{URL: "https://example.com/x.png"})
+	part, err := encodeImagePart(&protocol.MediaContent{URL: "https://example.com/x.png"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestEncodeImagePartOmitsDetailWhenEmpty(t *testing.T) {
 }
 
 func TestEncodeFilePartUsesFileID(t *testing.T) {
-	part, err := encodeFilePart(&core.MediaContent{FileID: "file-abc"})
+	part, err := encodeFilePart(&protocol.MediaContent{FileID: "file-abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestEncodeFilePartUsesFileID(t *testing.T) {
 }
 
 func TestEncodeFilePartInlinesBase64Data(t *testing.T) {
-	part, err := encodeFilePart(&core.MediaContent{Data: "aGVsbG8=", MIMEType: "text/plain", Filename: "hello.txt"})
+	part, err := encodeFilePart(&protocol.MediaContent{Data: "aGVsbG8=", MIMEType: "text/plain", Filename: "hello.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,23 +461,23 @@ func TestEncodeFilePartInlinesBase64Data(t *testing.T) {
 }
 
 func TestEncodeFilePartRejectsMissingIDAndData(t *testing.T) {
-	_, err := encodeFilePart(&core.MediaContent{})
+	_, err := encodeFilePart(&protocol.MediaContent{})
 	if err == nil {
 		t.Fatal("expected error for empty file media")
 	}
 }
 
 func TestEncodeToolResultsRejectsUnsupportedRichContent(t *testing.T) {
-	result := core.ToolResult{
+	result := protocol.ToolResult{
 		ToolCallID: "call-1",
 		ToolName:   "lookup",
-		Content: []core.ContentPart{
-			{Type: core.ContentText, Text: "caption"},
-			{Type: core.ContentImage, Media: &core.MediaContent{URL: "https://example.com/image.png"}},
+		Content: []protocol.ContentPart{
+			{Type: protocol.ContentText, Text: "caption"},
+			{Type: protocol.ContentImage, Media: &protocol.MediaContent{URL: "https://example.com/image.png"}},
 		},
 	}
-	_, err := encodeToolResults(core.Message{Role: core.RoleTool, Parts: []core.ContentPart{{
-		Type: core.ContentToolResult, ToolResult: &result,
+	_, err := encodeToolResults(protocol.Message{Role: protocol.RoleTool, Parts: []protocol.ContentPart{{
+		Type: protocol.ContentToolResult, ToolResult: &result,
 	}}})
 	if err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("err=%v", err)
@@ -485,16 +485,16 @@ func TestEncodeToolResultsRejectsUnsupportedRichContent(t *testing.T) {
 }
 
 func TestEncodeToolResultsConcatenatesTextParts(t *testing.T) {
-	result := core.ToolResult{
+	result := protocol.ToolResult{
 		ToolCallID: "call-1",
 		ToolName:   "lookup",
-		Content: []core.ContentPart{
-			{Type: core.ContentText, Text: "first"},
-			{Type: core.ContentText, Text: "second"},
+		Content: []protocol.ContentPart{
+			{Type: protocol.ContentText, Text: "first"},
+			{Type: protocol.ContentText, Text: "second"},
 		},
 	}
-	messages, err := encodeToolResults(core.Message{Role: core.RoleTool, Parts: []core.ContentPart{{
-		Type: core.ContentToolResult, ToolResult: &result,
+	messages, err := encodeToolResults(protocol.Message{Role: protocol.RoleTool, Parts: []protocol.ContentPart{{
+		Type: protocol.ContentToolResult, ToolResult: &result,
 	}}})
 	if err != nil {
 		t.Fatal(err)

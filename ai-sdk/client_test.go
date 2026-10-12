@@ -5,19 +5,21 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
 type scriptedProvider struct {
-	responses []ModelResponse
-	requests  []ModelRequest
+	responses []protocol.ModelResponse
+	requests  []protocol.ModelRequest
 }
 
 func (provider *scriptedProvider) Name() string { return "scripted" }
 
-func (provider *scriptedProvider) Generate(_ context.Context, request ModelRequest) (ModelResponse, error) {
+func (provider *scriptedProvider) Generate(_ context.Context, request protocol.ModelRequest) (protocol.ModelResponse, error) {
 	provider.requests = append(provider.requests, request)
 	if len(provider.responses) == 0 {
-		return ModelResponse{}, errors.New("no scripted response")
+		return protocol.ModelResponse{}, errors.New("no scripted response")
 	}
 	response := provider.responses[0]
 	provider.responses = provider.responses[1:]
@@ -26,7 +28,7 @@ func (provider *scriptedProvider) Generate(_ context.Context, request ModelReque
 
 func TestClientGenerateHooksSurroundProviderCall(t *testing.T) {
 	var lifecycle []string
-	provider := &scriptedProvider{responses: []ModelResponse{{Message: TextMessage(RoleAssistant, "ok")}}}
+	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "ok")}}}
 	client := NewClient(provider, Hooks{
 		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
 			lifecycle = append(lifecycle, "request")
@@ -41,9 +43,9 @@ func TestClientGenerateHooksSurroundProviderCall(t *testing.T) {
 		}},
 	})
 
-	response, err := client.Generate(context.Background(), ModelRequest{
+	response, err := client.Generate(context.Background(), protocol.ModelRequest{
 		Model:    "model",
-		Messages: []Message{TextMessage(RoleUser, "hi")},
+		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 	})
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
@@ -57,11 +59,11 @@ func TestClientGenerateHooksSurroundProviderCall(t *testing.T) {
 }
 
 func TestClientHooksShareRequestAndRequestID(t *testing.T) {
-	provider := &scriptedProvider{responses: []ModelResponse{{
-		Message: TextMessage(RoleAssistant, "ok"),
+	provider := &scriptedProvider{responses: []protocol.ModelResponse{{
+		Message: protocol.TextMessage(protocol.RoleAssistant, "ok"),
 	}}}
 	var requestIDFromRequest, requestIDFromResponse string
-	var responseRequest ModelRequest
+	var responseRequest protocol.ModelRequest
 	client := NewClient(provider, Hooks{
 		OnRequest: []RequestHook{func(_ context.Context, info RequestInfo) error {
 			requestIDFromRequest = info.RequestID
@@ -73,9 +75,9 @@ func TestClientHooksShareRequestAndRequestID(t *testing.T) {
 			return nil
 		}},
 	})
-	request := ModelRequest{
+	request := protocol.ModelRequest{
 		Model:    "model",
-		Messages: []Message{TextMessage(RoleUser, "hello")},
+		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hello")},
 		Metadata: map[string]string{RequestIDMetadataKey: "req_test_123"},
 	}
 	if _, err := client.Generate(context.Background(), request); err != nil {
@@ -90,16 +92,16 @@ func TestClientHooksShareRequestAndRequestID(t *testing.T) {
 }
 
 func TestClientGenerateRequestHookErrorSkipsProviderCall(t *testing.T) {
-	provider := &scriptedProvider{responses: []ModelResponse{{Message: TextMessage(RoleAssistant, "ok")}}}
+	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "ok")}}}
 	client := NewClient(provider, Hooks{
 		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
 			return errors.New("blocked")
 		}},
 	})
 
-	_, err := client.Generate(context.Background(), ModelRequest{
+	_, err := client.Generate(context.Background(), protocol.ModelRequest{
 		Model:    "model",
-		Messages: []Message{TextMessage(RoleUser, "hi")},
+		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 	})
 	if err == nil || !strings.Contains(err.Error(), "blocked") {
 		t.Fatalf("err = %v, want blocked", err)
@@ -119,9 +121,9 @@ func TestClientGenerateResponseHookObservesProviderError(t *testing.T) {
 		}},
 	})
 
-	_, err := client.Generate(context.Background(), ModelRequest{
+	_, err := client.Generate(context.Background(), protocol.ModelRequest{
 		Model:    "model",
-		Messages: []Message{TextMessage(RoleUser, "hi")},
+		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 	})
 	if err == nil {
 		t.Fatalf("expected provider error")
@@ -132,7 +134,7 @@ func TestClientGenerateResponseHookObservesProviderError(t *testing.T) {
 }
 
 func TestClientStreamRejectsProviderWithoutStreaming(t *testing.T) {
-	provider := &scriptedProvider{responses: []ModelResponse{{Message: TextMessage(RoleAssistant, "ok")}}}
+	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "ok")}}}
 	hookCalled := false
 	client := NewClient(provider, Hooks{
 		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
@@ -141,9 +143,9 @@ func TestClientStreamRejectsProviderWithoutStreaming(t *testing.T) {
 		}},
 	})
 
-	_, err := client.Stream(context.Background(), ModelRequest{
-		Model: "model", Messages: []Message{TextMessage(RoleUser, "hi")},
-	}, EventSinkFunc(func(_ context.Context, _ StreamEvent) error {
+	_, err := client.Stream(context.Background(), protocol.ModelRequest{
+		Model: "model", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
+	}, protocol.EventSinkFunc(func(_ context.Context, _ protocol.StreamEvent) error {
 		t.Fatal("sink should not receive events")
 		return nil
 	}))
@@ -162,19 +164,19 @@ func TestClientStreamUsesProviderStreamMethod(t *testing.T) {
 	streamingCalled := false
 	provider := &streamingScriptedProvider{
 		scriptedProvider: scriptedProvider{},
-		streamFunc: func(_ context.Context, _ ModelRequest, sink EventSink) (ModelResponse, error) {
+		streamFunc: func(_ context.Context, _ protocol.ModelRequest, sink protocol.EventSink) (protocol.ModelResponse, error) {
 			streamingCalled = true
-			_ = sink.OnEvent(context.Background(), StreamEvent{Type: EventTextDelta, Delta: "hi"})
-			return ModelResponse{Message: TextMessage(RoleAssistant, "hi")}, nil
+			_ = sink.OnEvent(context.Background(), protocol.StreamEvent{Type: protocol.EventTextDelta, Delta: "hi"})
+			return protocol.ModelResponse{Message: protocol.TextMessage(protocol.RoleAssistant, "hi")}, nil
 		},
 	}
 	client := NewClient(provider, Hooks{})
 
 	var deltas []string
-	_, err := client.Stream(context.Background(), ModelRequest{
-		Model: "model", Messages: []Message{TextMessage(RoleUser, "hi")},
-	}, EventSinkFunc(func(_ context.Context, event StreamEvent) error {
-		if event.Type == EventTextDelta {
+	_, err := client.Stream(context.Background(), protocol.ModelRequest{
+		Model: "model", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
+	}, protocol.EventSinkFunc(func(_ context.Context, event protocol.StreamEvent) error {
+		if event.Type == protocol.EventTextDelta {
 			deltas = append(deltas, event.Delta)
 		}
 		return nil
@@ -192,23 +194,23 @@ func TestClientStreamUsesProviderStreamMethod(t *testing.T) {
 
 type streamingScriptedProvider struct {
 	scriptedProvider
-	streamFunc func(context.Context, ModelRequest, EventSink) (ModelResponse, error)
+	streamFunc func(context.Context, protocol.ModelRequest, protocol.EventSink) (protocol.ModelResponse, error)
 }
 
-func (provider *streamingScriptedProvider) Stream(ctx context.Context, request ModelRequest, sink EventSink) (ModelResponse, error) {
+func (provider *streamingScriptedProvider) Stream(ctx context.Context, request protocol.ModelRequest, sink protocol.EventSink) (protocol.ModelResponse, error) {
 	return provider.streamFunc(ctx, request, sink)
 }
 
 func TestClientGenerateRequiresProvider(t *testing.T) {
 	client := NewClient(nil, Hooks{})
-	_, err := client.Generate(context.Background(), ModelRequest{Model: "model"})
+	_, err := client.Generate(context.Background(), protocol.ModelRequest{Model: "model"})
 	if err == nil {
 		t.Fatalf("expected error for nil provider")
 	}
 }
 
 func TestClientGenerateHookPanicPropagates(t *testing.T) {
-	provider := &scriptedProvider{responses: []ModelResponse{{Message: TextMessage(RoleAssistant, "ok")}}}
+	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "ok")}}}
 	client := NewClient(provider, Hooks{
 		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
 			panic("boom")
@@ -226,9 +228,9 @@ func TestClientGenerateHookPanicPropagates(t *testing.T) {
 			t.Fatalf("provider should not have been called, got %d requests", len(provider.requests))
 		}
 	}()
-	_, _ = client.Generate(context.Background(), ModelRequest{
+	_, _ = client.Generate(context.Background(), protocol.ModelRequest{
 		Model:    "model",
-		Messages: []Message{TextMessage(RoleUser, "hi")},
+		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 	})
 	t.Fatal("expected hook panic to propagate")
 }

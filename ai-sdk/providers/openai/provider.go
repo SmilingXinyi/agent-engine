@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	core "github.com/SmilingXinyi/agent-engine/ai-sdk"
+	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
 const defaultTimeout = 2 * time.Minute
@@ -108,36 +108,36 @@ func (provider *Provider) Name() string {
 	return provider.name
 }
 
-func (provider *Provider) Generate(ctx context.Context, request core.ModelRequest) (core.ModelResponse, error) {
+func (provider *Provider) Generate(ctx context.Context, request protocol.ModelRequest) (protocol.ModelResponse, error) {
 	payload, err := provider.buildRequest(request, false)
 	if err != nil {
-		return core.ModelResponse{}, err
+		return protocol.ModelResponse{}, err
 	}
 	response, err := provider.send(ctx, payload)
 	if err != nil {
-		return core.ModelResponse{}, err
+		return protocol.ModelResponse{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if err := validateHTTPResponse(response); err != nil {
-		return core.ModelResponse{}, err
+		return protocol.ModelResponse{}, err
 	}
 	bodyBytes, err := io.ReadAll(io.LimitReader(response.Body, provider.maxResponseBytes+1))
 	if err != nil {
-		return core.ModelResponse{}, fmt.Errorf("read OpenAI response: %w", err)
+		return protocol.ModelResponse{}, fmt.Errorf("read OpenAI response: %w", err)
 	}
 	if int64(len(bodyBytes)) > provider.maxResponseBytes {
-		return core.ModelResponse{}, fmt.Errorf("OpenAI response exceeds %d bytes", provider.maxResponseBytes)
+		return protocol.ModelResponse{}, fmt.Errorf("OpenAI response exceeds %d bytes", provider.maxResponseBytes)
 	}
 	if provider.apiType == APITypeResponsesAPI {
 		var body responsesResponse
 		if err := json.Unmarshal(bodyBytes, &body); err != nil {
-			return core.ModelResponse{}, fmt.Errorf("decode OpenAI Responses response: %w", err)
+			return protocol.ModelResponse{}, fmt.Errorf("decode OpenAI Responses response: %w", err)
 		}
 		return convertResponsesResponse(body, provider.name)
 	}
 	var body chatResponse
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
-		return core.ModelResponse{}, fmt.Errorf("decode OpenAI response: %w", err)
+		return protocol.ModelResponse{}, fmt.Errorf("decode OpenAI response: %w", err)
 	}
 	return convertResponse(body, provider.name)
 }
@@ -206,7 +206,7 @@ func (provider *Provider) endpoint() string {
 	return provider.baseURL + suffix
 }
 
-func (provider *Provider) buildRequest(request core.ModelRequest, stream bool) (map[string]any, error) {
+func (provider *Provider) buildRequest(request protocol.ModelRequest, stream bool) (map[string]any, error) {
 	if provider.apiType == APITypeResponsesAPI {
 		return buildResponsesRequest(request, stream)
 	}
