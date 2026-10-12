@@ -175,10 +175,15 @@ type EventSink interface {
 type EventSinkFunc func(context.Context, StreamEvent) error
 
 // Provider maps the common ModelRequest and ModelResponse format to one AI
-// service. Implementations without native incremental output can synthesize
-// StreamEvents from a Generate result using EmitModelResponse.
+// service. It performs one complete call via Generate.
 type Provider interface {
 	Name() string
 	Generate(ctx context.Context, request ModelRequest) (ModelResponse, error)
+}
+
+// StreamingProvider is a Provider that delivers incremental output through
+// Stream. Leave it unimplemented when the upstream API has no stream.
+type StreamingProvider interface {
+	Provider
 	Stream(ctx context.Context, request ModelRequest, sink EventSink) (ModelResponse, error)
 }

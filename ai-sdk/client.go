@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// ErrStreamingNotSupported is returned when Stream is called on a Provider
+// whose upstream API has no incremental output.
+var ErrStreamingNotSupported = errors.New("ai-sdk provider does not support streaming")
+
 // Client invokes a Provider and owns the model-call lifecycle hooks. It has
 // no loop and no tool execution: exactly one Provider call per Generate or
 // Stream invocation.
@@ -26,6 +30,7 @@ func (client *Client) Generate(ctx context.Context, request ModelRequest) (Model
 }
 
 // Stream performs one model call, delivering incremental output to sink.
+// It returns ErrStreamingNotSupported when the Provider does not implement StreamingProvider.
 func (client *Client) Stream(ctx context.Context, request ModelRequest, sink EventSink) (ModelResponse, error) {
 	return client.call(ctx, request, sink, true)
 }
@@ -33,6 +38,15 @@ func (client *Client) Stream(ctx context.Context, request ModelRequest, sink Eve
 func (client *Client) call(ctx context.Context, request ModelRequest, sink EventSink, streaming bool) (response ModelResponse, err error) {
 	if client == nil || client.provider == nil {
 		return ModelResponse{}, errors.New("ai-sdk provider is required")
+	}
+
+	var streamingProvider StreamingProvider
+	if streaming {
+		var ok bool
+		streamingProvider, ok = client.provider.(StreamingProvider)
+		if !ok {
+			return ModelResponse{}, ErrStreamingNotSupported
+		}
 	}
 
 	providerName := client.provider.Name()
@@ -52,7 +66,7 @@ func (client *Client) call(ctx context.Context, request ModelRequest, sink Event
 
 	startedAt := time.Now()
 	if streaming {
-		response, err = client.provider.Stream(ctx, request, sink)
+		response, err = streamingProvider.Stream(ctx, request, sink)
 	} else {
 		response, err = client.provider.Generate(ctx, request)
 	}

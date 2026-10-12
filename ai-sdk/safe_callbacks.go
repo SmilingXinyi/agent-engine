@@ -29,15 +29,3 @@ func callResponseHook(ctx context.Context, hook ResponseHook, info ResponseInfo)
 	}()
 	return hook(ctx, info)
 }
-
-func callEventSink(ctx context.Context, sink EventSink, event StreamEvent) (err error) {
-	if sink == nil {
-		return nil
-	}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			err = callbackPanicError("event sink", recovered)
-		}
-	}()
-	return sink.OnEvent(ctx, event)
-}

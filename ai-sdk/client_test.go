@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -22,17 +21,6 @@ func (provider *scriptedProvider) Generate(_ context.Context, request ModelReque
 	}
 	response := provider.responses[0]
 	provider.responses = provider.responses[1:]
-	return response, nil
-}
-
-func (provider *scriptedProvider) Stream(ctx context.Context, request ModelRequest, sink EventSink) (ModelResponse, error) {
-	response, err := provider.Generate(ctx, request)
-	if err != nil {
-		return ModelResponse{}, err
-	}
-	if err := EmitModelResponse(ctx, sink, response); err != nil {
-		return ModelResponse{}, err
-	}
 	return response, nil
 }
 
@@ -143,42 +131,30 @@ func TestClientGenerateResponseHookObservesProviderError(t *testing.T) {
 	}
 }
 
-func TestClientStreamFallbackUsesToolCallDeltaPayload(t *testing.T) {
-	call := ToolCall{ID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{"city":"BJ"}`)}
-	provider := &scriptedProvider{responses: []ModelResponse{{
-		Message:      Message{Role: RoleAssistant, Parts: []ContentPart{{Type: ContentToolCall, ToolCall: &call}}},
-		FinishReason: FinishToolCalls,
-	}}}
-	client := NewClient(provider, Hooks{})
+func TestClientStreamRejectsProviderWithoutStreaming(t *testing.T) {
+	provider := &scriptedProvider{responses: []ModelResponse{{Message: TextMessage(RoleAssistant, "ok")}}}
+	hookCalled := false
+	client := NewClient(provider, Hooks{
+		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
+			hookCalled = true
+			return nil
+		}},
+	})
 
-	var toolEvent StreamEvent
-	var sawFinish bool
 	_, err := client.Stream(context.Background(), ModelRequest{
 		Model: "model", Messages: []Message{TextMessage(RoleUser, "hi")},
-	}, EventSinkFunc(func(_ context.Context, event StreamEvent) error {
-		switch event.Type {
-		case EventToolCallDelta:
-			toolEvent = event
-		case EventFinish:
-			sawFinish = true
-			if event.FinishReason != FinishToolCalls {
-				t.Fatalf("finish reason = %q", event.FinishReason)
-			}
-		}
+	}, EventSinkFunc(func(_ context.Context, _ StreamEvent) error {
+		t.Fatal("sink should not receive events")
 		return nil
 	}))
-	if err != nil {
-		t.Fatalf("stream: %v", err)
+	if !errors.Is(err, ErrStreamingNotSupported) {
+		t.Fatalf("err = %v, want ErrStreamingNotSupported", err)
 	}
-	if toolEvent.ToolCallDelta == nil {
-		t.Fatalf("tool event payload = %#v", toolEvent)
+	if hookCalled {
+		t.Fatal("request hook should not run when streaming is unsupported")
 	}
-	if toolEvent.ToolCallDelta.Index != 0 || toolEvent.ToolCallDelta.ID != "call-1" ||
-		toolEvent.ToolCallDelta.Name != "lookup" || toolEvent.ToolCallDelta.ArgumentsDelta != `{"city":"BJ"}` {
-		t.Fatalf("tool event = %#v", toolEvent)
-	}
-	if !sawFinish {
-		t.Fatalf("expected a finish event")
+	if len(provider.requests) != 0 {
+		t.Fatalf("provider should not have been called, got %d requests", len(provider.requests))
 	}
 }
 
