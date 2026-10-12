@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	core "github.com/SmilingXinyi/agent-engine/ai-sdk"
+	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
 // responsesUsage is deliberately separate from openAIUsage because the two
@@ -53,7 +53,7 @@ type responsesContentPart struct {
 	Text string `json:"text"`
 }
 
-func buildResponsesRequest(request core.ModelRequest, stream bool) (map[string]any, error) {
+func buildResponsesRequest(request protocol.ModelRequest, stream bool) (map[string]any, error) {
 	payload := make(map[string]any, len(request.ProviderOptions)+8)
 	_, hasExplicitReasoning := request.ProviderOptions["reasoning"]
 	for key, value := range request.ProviderOptions {
@@ -82,7 +82,7 @@ func buildResponsesRequest(request core.ModelRequest, stream bool) (map[string]a
 	var instructions []string
 	input := make([]any, 0, len(request.Messages))
 	for index, message := range request.Messages {
-		if message.Role == core.RoleSystem {
+		if message.Role == protocol.RoleSystem {
 			text, err := responsesMessageText(message)
 			if err != nil {
 				return nil, fmt.Errorf("encode message %d: %w", index, err)
@@ -129,7 +129,7 @@ func buildResponsesRequest(request core.ModelRequest, stream bool) (map[string]a
 	}
 	if request.ToolChoice != "" {
 		switch request.ToolChoice {
-		case core.ToolChoiceAuto, core.ToolChoiceNone, core.ToolChoiceRequired:
+		case protocol.ToolChoiceAuto, protocol.ToolChoiceNone, protocol.ToolChoiceRequired:
 			payload["tool_choice"] = string(request.ToolChoice)
 		default:
 			payload["tool_choice"] = map[string]any{
@@ -175,8 +175,8 @@ func isReservedResponsesRequestField(key string) bool {
 	}
 }
 
-func encodeResponsesMessage(message core.Message) ([]map[string]any, error) {
-	if message.Role == core.RoleTool {
+func encodeResponsesMessage(message protocol.Message) ([]map[string]any, error) {
+	if message.Role == protocol.RoleTool {
 		results := message.ToolResults()
 		if len(results) == 0 {
 			return nil, fmt.Errorf("tool message has no tool result")
@@ -193,25 +193,25 @@ func encodeResponsesMessage(message core.Message) ([]map[string]any, error) {
 		}
 		return items, nil
 	}
-	if message.Role != core.RoleUser && message.Role != core.RoleAssistant {
+	if message.Role != protocol.RoleUser && message.Role != protocol.RoleAssistant {
 		return nil, fmt.Errorf("unsupported message role %q", message.Role)
 	}
 	content := make([]map[string]any, 0, len(message.Parts))
 	var calls []map[string]any
 	for _, part := range message.Parts {
 		switch part.Type {
-		case core.ContentText:
+		case protocol.ContentText:
 			contentType := "input_text"
-			if message.Role == core.RoleAssistant {
+			if message.Role == protocol.RoleAssistant {
 				contentType = "output_text"
 			}
 			content = append(content, map[string]any{"type": contentType, "text": part.Text})
-		case core.ContentReasoning:
+		case protocol.ContentReasoning:
 			// Reasoning summaries are output-only in the Responses API and
 			// cannot be replayed as ordinary input content.
 			continue
-		case core.ContentImage:
-			if message.Role == core.RoleAssistant {
+		case protocol.ContentImage:
+			if message.Role == protocol.RoleAssistant {
 				return nil, fmt.Errorf("content type %q is not supported in assistant Responses input", part.Type)
 			}
 			image, err := encodeResponsesImage(part.Media)
@@ -219,8 +219,8 @@ func encodeResponsesMessage(message core.Message) ([]map[string]any, error) {
 				return nil, err
 			}
 			content = append(content, image)
-		case core.ContentFile:
-			if message.Role == core.RoleAssistant {
+		case protocol.ContentFile:
+			if message.Role == protocol.RoleAssistant {
 				return nil, fmt.Errorf("content type %q is not supported in assistant Responses input", part.Type)
 			}
 			file, err := encodeResponsesFile(part.Media)
@@ -228,18 +228,18 @@ func encodeResponsesMessage(message core.Message) ([]map[string]any, error) {
 				return nil, err
 			}
 			content = append(content, file)
-		case core.ContentAudio:
+		case protocol.ContentAudio:
 			return nil, fmt.Errorf("content type %q is not supported by Responses API adapter", part.Type)
-		case core.ContentToolCall:
-			if message.Role != core.RoleAssistant || part.ToolCall == nil {
+		case protocol.ContentToolCall:
+			if message.Role != protocol.RoleAssistant || part.ToolCall == nil {
 				return nil, fmt.Errorf("tool call part is missing call data")
 			}
 			calls = append(calls, map[string]any{
 				"type": "function_call", "call_id": part.ToolCall.ID,
 				"name": part.ToolCall.Name, "arguments": string(part.ToolCall.Arguments),
 			})
-		case core.ContentToolResult:
-			return nil, fmt.Errorf("tool result must use role %q", core.RoleTool)
+		case protocol.ContentToolResult:
+			return nil, fmt.Errorf("tool result must use role %q", protocol.RoleTool)
 		default:
 			return nil, fmt.Errorf("unsupported content type %q", part.Type)
 		}
@@ -254,10 +254,10 @@ func encodeResponsesMessage(message core.Message) ([]map[string]any, error) {
 	return items, nil
 }
 
-func responsesMessageText(message core.Message) (string, error) {
+func responsesMessageText(message protocol.Message) (string, error) {
 	var text strings.Builder
 	for _, part := range message.Parts {
-		if part.Type != core.ContentText {
+		if part.Type != protocol.ContentText {
 			return "", fmt.Errorf("system message content type %q is not supported", part.Type)
 		}
 		text.WriteString(part.Text)
@@ -265,10 +265,10 @@ func responsesMessageText(message core.Message) (string, error) {
 	return text.String(), nil
 }
 
-func responsesToolResultText(result core.ToolResult) (string, error) {
+func responsesToolResultText(result protocol.ToolResult) (string, error) {
 	var text strings.Builder
 	for index, part := range result.Content {
-		if part.Type != core.ContentText {
+		if part.Type != protocol.ContentText {
 			return "", fmt.Errorf("tool %q result content %d type %q is not supported by Responses API", result.ToolName, index, part.Type)
 		}
 		text.WriteString(part.Text)
@@ -276,7 +276,7 @@ func responsesToolResultText(result core.ToolResult) (string, error) {
 	return text.String(), nil
 }
 
-func encodeResponsesImage(media *core.MediaContent) (map[string]any, error) {
+func encodeResponsesImage(media *protocol.MediaContent) (map[string]any, error) {
 	if media == nil {
 		return nil, fmt.Errorf("image part is missing media")
 	}
@@ -306,7 +306,7 @@ func encodeResponsesImage(media *core.MediaContent) (map[string]any, error) {
 	return part, nil
 }
 
-func encodeResponsesFile(media *core.MediaContent) (map[string]any, error) {
+func encodeResponsesFile(media *protocol.MediaContent) (map[string]any, error) {
 	if media == nil {
 		return nil, fmt.Errorf("file part is missing media")
 	}
@@ -332,8 +332,8 @@ func encodeResponsesFile(media *core.MediaContent) (map[string]any, error) {
 	return part, nil
 }
 
-func convertResponsesResponse(response responsesResponse, providerName string) (core.ModelResponse, error) {
-	message := core.Message{Role: core.RoleAssistant}
+func convertResponsesResponse(response responsesResponse, providerName string) (protocol.ModelResponse, error) {
+	message := protocol.Message{Role: protocol.RoleAssistant}
 	seenText := false
 	toolCalls := 0
 	for _, item := range response.Output {
@@ -342,7 +342,7 @@ func convertResponsesResponse(response responsesResponse, providerName string) (
 			for _, part := range item.Content {
 				if part.Type == "output_text" || part.Type == "text" || part.Type == "refusal" {
 					if part.Text != "" {
-						message.Parts = append(message.Parts, core.ContentPart{Type: core.ContentText, Text: part.Text})
+						message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentText, Text: part.Text})
 						seenText = true
 					}
 				}
@@ -350,20 +350,20 @@ func convertResponsesResponse(response responsesResponse, providerName string) (
 		case "reasoning":
 			for _, part := range item.Summary {
 				if part.Text != "" {
-					message.Parts = append(message.Parts, core.ContentPart{Type: core.ContentReasoning, Text: part.Text})
+					message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentReasoning, Text: part.Text})
 				}
 			}
 		case "function_call":
-			call := core.ToolCall{ID: item.CallID, Name: item.Name, Arguments: json.RawMessage(item.Arguments)}
-			message.Parts = append(message.Parts, core.ContentPart{Type: core.ContentToolCall, ToolCall: &call})
+			call := protocol.ToolCall{ID: item.CallID, Name: item.Name, Arguments: json.RawMessage(item.Arguments)}
+			message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentToolCall, ToolCall: &call})
 			toolCalls++
 		}
 	}
 	if response.OutputText != "" && !seenText {
-		message.Parts = append(message.Parts, core.ContentPart{Type: core.ContentText, Text: response.OutputText})
+		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentText, Text: response.OutputText})
 	}
 	finishReason := responsesFinishReason(response.Status, response.IncompleteDetail.Reason, toolCalls > 0)
-	return core.ModelResponse{
+	return protocol.ModelResponse{
 		Message:      message,
 		FinishReason: finishReason,
 		Usage:        convertResponsesUsage(response.Usage),
@@ -371,35 +371,35 @@ func convertResponsesResponse(response responsesResponse, providerName string) (
 	}, nil
 }
 
-func convertResponsesUsage(usage responsesUsage) core.Usage {
-	return core.Usage{
+func convertResponsesUsage(usage responsesUsage) protocol.Usage {
+	return protocol.Usage{
 		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
 		TotalTokens: usage.TotalTokens, ReasoningTokens: usage.OutputDetails.ReasoningTokens,
 		CacheReadTokens: usage.InputDetails.CachedTokens,
 	}
 }
 
-func responsesFinishReason(status, incompleteReason string, hasToolCalls bool) core.FinishReason {
+func responsesFinishReason(status, incompleteReason string, hasToolCalls bool) protocol.FinishReason {
 	if hasToolCalls {
-		return core.FinishToolCalls
+		return protocol.FinishToolCalls
 	}
 	switch status {
 	case "completed":
-		return core.FinishStop
+		return protocol.FinishStop
 	case "incomplete":
 		switch incompleteReason {
 		case "max_output_tokens", "length":
-			return core.FinishLength
+			return protocol.FinishLength
 		case "content_filter":
-			return core.FinishContentFilter
+			return protocol.FinishContentFilter
 		default:
-			return core.FinishOther
+			return protocol.FinishOther
 		}
 	case "failed", "cancelled":
-		return core.FinishError
+		return protocol.FinishError
 	case "":
 		return ""
 	default:
-		return core.FinishOther
+		return protocol.FinishOther
 	}
 }

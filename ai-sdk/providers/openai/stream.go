@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	core "github.com/SmilingXinyi/agent-engine/ai-sdk"
+	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
 type streamChunk struct {
@@ -43,28 +43,28 @@ type streamAccumulator struct {
 	reasoning    strings.Builder
 	toolCalls    map[int]*toolCallBuilder
 	providerName string
-	finishReason core.FinishReason
-	usage        core.Usage
+	finishReason protocol.FinishReason
+	usage        protocol.Usage
 	id           string
 	model        string
 	created      int64
 }
 
-func (provider *Provider) Stream(ctx context.Context, request core.ModelRequest, sink core.EventSink) (core.ModelResponse, error) {
+func (provider *Provider) Stream(ctx context.Context, request protocol.ModelRequest, sink protocol.EventSink) (protocol.ModelResponse, error) {
 	if provider.apiType == APITypeResponsesAPI {
 		return provider.streamResponses(ctx, request, sink)
 	}
 	payload, err := provider.buildRequest(request, true)
 	if err != nil {
-		return core.ModelResponse{}, err
+		return protocol.ModelResponse{}, err
 	}
 	response, err := provider.send(ctx, payload)
 	if err != nil {
-		return core.ModelResponse{}, err
+		return protocol.ModelResponse{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if err := validateHTTPResponse(response); err != nil {
-		return core.ModelResponse{}, err
+		return protocol.ModelResponse{}, err
 	}
 
 	accumulator := streamAccumulator{
@@ -116,7 +116,7 @@ func (provider *Provider) Stream(ctx context.Context, request core.ModelRequest,
 	return accumulator.response(), nil
 }
 
-func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamChunk, sink core.EventSink) error {
+func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamChunk, sink protocol.EventSink) error {
 	if chunk.ID != "" {
 		accumulator.id = chunk.ID
 	}
@@ -130,7 +130,7 @@ func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamC
 		accumulator.usage = convertUsage(chunk.Usage)
 		if sink != nil {
 			usage := accumulator.usage
-			if err := sink.OnEvent(ctx, core.StreamEvent{Type: core.EventUsage, Usage: &usage}); err != nil {
+			if err := sink.OnEvent(ctx, protocol.StreamEvent{Type: protocol.EventUsage, Usage: &usage}); err != nil {
 				return fmt.Errorf("stream usage event: %w", err)
 			}
 		}
@@ -142,7 +142,7 @@ func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamC
 		if choice.Delta.Content != "" {
 			accumulator.text.WriteString(choice.Delta.Content)
 			if sink != nil {
-				if err := sink.OnEvent(ctx, core.StreamEvent{Type: core.EventTextDelta, Delta: choice.Delta.Content}); err != nil {
+				if err := sink.OnEvent(ctx, protocol.StreamEvent{Type: protocol.EventTextDelta, Delta: choice.Delta.Content}); err != nil {
 					return fmt.Errorf("stream text event: %w", err)
 				}
 			}
@@ -154,7 +154,7 @@ func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamC
 		if reasoning != "" {
 			accumulator.reasoning.WriteString(reasoning)
 			if sink != nil {
-				if err := sink.OnEvent(ctx, core.StreamEvent{Type: core.EventReasoningDelta, Delta: reasoning}); err != nil {
+				if err := sink.OnEvent(ctx, protocol.StreamEvent{Type: protocol.EventReasoningDelta, Delta: reasoning}); err != nil {
 					return fmt.Errorf("stream reasoning event: %w", err)
 				}
 			}
@@ -171,9 +171,9 @@ func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamC
 			builder.name.WriteString(delta.Function.Name)
 			builder.arguments.WriteString(delta.Function.Arguments)
 			if sink != nil {
-				event := core.StreamEvent{
-					Type: core.EventToolCallDelta,
-					ToolCallDelta: &core.ToolCallDelta{
+				event := protocol.StreamEvent{
+					Type: protocol.EventToolCallDelta,
+					ToolCallDelta: &protocol.ToolCallDelta{
 						Index: delta.Index, ID: delta.ID, Name: delta.Function.Name,
 						ArgumentsDelta: delta.Function.Arguments,
 					},
@@ -190,13 +190,13 @@ func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamC
 	return nil
 }
 
-func (accumulator *streamAccumulator) response() core.ModelResponse {
-	message := core.Message{Role: core.RoleAssistant}
+func (accumulator *streamAccumulator) response() protocol.ModelResponse {
+	message := protocol.Message{Role: protocol.RoleAssistant}
 	if accumulator.text.Len() > 0 {
-		message.Parts = append(message.Parts, core.ContentPart{Type: core.ContentText, Text: accumulator.text.String()})
+		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentText, Text: accumulator.text.String()})
 	}
 	if accumulator.reasoning.Len() > 0 {
-		message.Parts = append(message.Parts, core.ContentPart{Type: core.ContentReasoning, Text: accumulator.reasoning.String()})
+		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentReasoning, Text: accumulator.reasoning.String()})
 	}
 	indexes := make([]int, 0, len(accumulator.toolCalls))
 	for index := range accumulator.toolCalls {
@@ -205,20 +205,20 @@ func (accumulator *streamAccumulator) response() core.ModelResponse {
 	sort.Ints(indexes)
 	for _, index := range indexes {
 		builder := accumulator.toolCalls[index]
-		call := core.ToolCall{
+		call := protocol.ToolCall{
 			ID: builder.id, Name: builder.name.String(), Arguments: json.RawMessage(builder.arguments.String()),
 		}
-		message.Parts = append(message.Parts, core.ContentPart{Type: core.ContentToolCall, ToolCall: &call})
+		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentToolCall, ToolCall: &call})
 	}
 	finishReason := accumulator.finishReason
 	if finishReason == "" {
 		if len(accumulator.toolCalls) > 0 {
-			finishReason = core.FinishToolCalls
+			finishReason = protocol.FinishToolCalls
 		} else {
-			finishReason = core.FinishStop
+			finishReason = protocol.FinishStop
 		}
 	}
-	return core.ModelResponse{
+	return protocol.ModelResponse{
 		Message:      message,
 		FinishReason: finishReason,
 		Usage:        accumulator.usage,

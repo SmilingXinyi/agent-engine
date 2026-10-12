@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	core "github.com/SmilingXinyi/agent-engine/ai-sdk"
+	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
 type chatMessage struct {
@@ -62,7 +62,7 @@ type openAIUsage struct {
 	} `json:"completion_tokens_details"`
 }
 
-func buildRequest(request core.ModelRequest, stream bool) (map[string]any, error) {
+func buildRequest(request protocol.ModelRequest, stream bool) (map[string]any, error) {
 	messages, err := encodeMessages(request.Messages)
 	if err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func buildRequest(request core.ModelRequest, stream bool) (map[string]any, error
 	}
 	if request.ToolChoice != "" {
 		switch request.ToolChoice {
-		case core.ToolChoiceAuto, core.ToolChoiceNone, core.ToolChoiceRequired:
+		case protocol.ToolChoiceAuto, protocol.ToolChoiceNone, protocol.ToolChoiceRequired:
 			payload["tool_choice"] = string(request.ToolChoice)
 		default:
 			payload["tool_choice"] = map[string]any{
@@ -135,10 +135,10 @@ func isReservedRequestField(key string) bool {
 	}
 }
 
-func encodeMessages(messages []core.Message) ([]chatMessage, error) {
+func encodeMessages(messages []protocol.Message) ([]chatMessage, error) {
 	result := make([]chatMessage, 0, len(messages))
 	for index, message := range messages {
-		if message.Role == core.RoleTool {
+		if message.Role == protocol.RoleTool {
 			toolMessages, err := encodeToolResults(message)
 			if err != nil {
 				return nil, fmt.Errorf("encode message %d: %w", index, err)
@@ -155,9 +155,9 @@ func encodeMessages(messages []core.Message) ([]chatMessage, error) {
 	return result, nil
 }
 
-func encodeMessage(message core.Message) (chatMessage, error) {
+func encodeMessage(message protocol.Message) (chatMessage, error) {
 	switch message.Role {
-	case core.RoleSystem, core.RoleUser, core.RoleAssistant:
+	case protocol.RoleSystem, protocol.RoleUser, protocol.RoleAssistant:
 	default:
 		return chatMessage{}, fmt.Errorf("unsupported message role %q", message.Role)
 	}
@@ -167,24 +167,24 @@ func encodeMessage(message core.Message) (chatMessage, error) {
 	var reasoning strings.Builder
 	for _, part := range message.Parts {
 		switch part.Type {
-		case core.ContentText:
+		case protocol.ContentText:
 			text.WriteString(part.Text)
 			contentParts = append(contentParts, map[string]any{"type": "text", "text": part.Text})
-		case core.ContentReasoning:
+		case protocol.ContentReasoning:
 			reasoning.WriteString(part.Text)
-		case core.ContentImage:
+		case protocol.ContentImage:
 			imagePart, err := encodeImagePart(part.Media)
 			if err != nil {
 				return chatMessage{}, err
 			}
 			contentParts = append(contentParts, imagePart)
-		case core.ContentFile:
+		case protocol.ContentFile:
 			filePart, err := encodeFilePart(part.Media)
 			if err != nil {
 				return chatMessage{}, err
 			}
 			contentParts = append(contentParts, filePart)
-		case core.ContentToolCall:
+		case protocol.ContentToolCall:
 			if part.ToolCall == nil {
 				return chatMessage{}, fmt.Errorf("tool call part is missing call data")
 			}
@@ -192,10 +192,10 @@ func encodeMessage(message core.Message) (chatMessage, error) {
 				ID: part.ToolCall.ID, Type: "function",
 				Function: chatFunction{Name: part.ToolCall.Name, Arguments: string(part.ToolCall.Arguments)},
 			})
-		case core.ContentAudio:
+		case protocol.ContentAudio:
 			return chatMessage{}, fmt.Errorf("content type %q is not supported by Chat Completions", part.Type)
-		case core.ContentToolResult:
-			return chatMessage{}, fmt.Errorf("tool result must use role %q", core.RoleTool)
+		case protocol.ContentToolResult:
+			return chatMessage{}, fmt.Errorf("tool result must use role %q", protocol.RoleTool)
 		default:
 			return chatMessage{}, fmt.Errorf("unsupported content type %q", part.Type)
 		}
@@ -212,7 +212,7 @@ func encodeMessage(message core.Message) (chatMessage, error) {
 // encodeImagePart converts a provider-neutral image MediaContent into an
 // OpenAI-compatible "image_url" content block. A Files API FileID takes
 // precedence over URL/Data since it requires no re-encoding.
-func encodeImagePart(media *core.MediaContent) (map[string]any, error) {
+func encodeImagePart(media *protocol.MediaContent) (map[string]any, error) {
 	if media == nil {
 		return nil, fmt.Errorf("image part is missing media")
 	}
@@ -244,7 +244,7 @@ func encodeImagePart(media *core.MediaContent) (map[string]any, error) {
 // encodeFilePart converts a provider-neutral file MediaContent into an
 // OpenAI/DeepSeek-compatible "file" content block, referencing a Files API
 // FileID or carrying inline base64 data via file_data.
-func encodeFilePart(media *core.MediaContent) (map[string]any, error) {
+func encodeFilePart(media *protocol.MediaContent) (map[string]any, error) {
 	if media == nil {
 		return nil, fmt.Errorf("file part is missing media")
 	}
@@ -272,7 +272,7 @@ func encodeFilePart(media *core.MediaContent) (map[string]any, error) {
 	return filePart, nil
 }
 
-func encodeToolResults(message core.Message) ([]chatMessage, error) {
+func encodeToolResults(message protocol.Message) ([]chatMessage, error) {
 	results := message.ToolResults()
 	if len(results) == 0 {
 		return nil, fmt.Errorf("tool message has no tool result")
@@ -281,7 +281,7 @@ func encodeToolResults(message core.Message) ([]chatMessage, error) {
 	for _, result := range results {
 		var content strings.Builder
 		for index, part := range result.Content {
-			if part.Type != core.ContentText {
+			if part.Type != protocol.ContentText {
 				return nil, fmt.Errorf(
 					"tool %q result content %d type %q is not supported by Chat Completions",
 					result.ToolName, index, part.Type,
@@ -305,16 +305,16 @@ func hasMediaContent(parts []map[string]any) bool {
 	return false
 }
 
-func convertResponse(response chatResponse, providerName string) (core.ModelResponse, error) {
+func convertResponse(response chatResponse, providerName string) (protocol.ModelResponse, error) {
 	if len(response.Choices) == 0 {
-		return core.ModelResponse{}, fmt.Errorf("OpenAI response has no choices")
+		return protocol.ModelResponse{}, fmt.Errorf("OpenAI response has no choices")
 	}
 	choice := response.Choices[0]
 	message, err := convertMessage(choice.Message)
 	if err != nil {
-		return core.ModelResponse{}, err
+		return protocol.ModelResponse{}, err
 	}
-	return core.ModelResponse{
+	return protocol.ModelResponse{
 		Message:      message,
 		FinishReason: mapFinishReason(choice.FinishReason),
 		Usage:        convertUsage(response.Usage),
@@ -322,27 +322,27 @@ func convertResponse(response chatResponse, providerName string) (core.ModelResp
 	}, nil
 }
 
-func convertMessage(message responseMessage) (core.Message, error) {
-	result := core.Message{Role: core.RoleAssistant}
+func convertMessage(message responseMessage) (protocol.Message, error) {
+	result := protocol.Message{Role: protocol.RoleAssistant}
 	text, err := decodeResponseContent(message.Content)
 	if err != nil {
-		return core.Message{}, err
+		return protocol.Message{}, err
 	}
 	if text != "" {
-		result.Parts = append(result.Parts, core.ContentPart{Type: core.ContentText, Text: text})
+		result.Parts = append(result.Parts, protocol.ContentPart{Type: protocol.ContentText, Text: text})
 	}
 	reasoning := message.ReasoningContent
 	if reasoning == "" {
 		reasoning = message.Reasoning
 	}
 	if reasoning != "" {
-		result.Parts = append(result.Parts, core.ContentPart{Type: core.ContentReasoning, Text: reasoning})
+		result.Parts = append(result.Parts, protocol.ContentPart{Type: protocol.ContentReasoning, Text: reasoning})
 	}
 	for _, call := range message.ToolCalls {
-		toolCall := core.ToolCall{
+		toolCall := protocol.ToolCall{
 			ID: call.ID, Name: call.Function.Name, Arguments: json.RawMessage(call.Function.Arguments),
 		}
-		result.Parts = append(result.Parts, core.ContentPart{Type: core.ContentToolCall, ToolCall: &toolCall})
+		result.Parts = append(result.Parts, protocol.ContentPart{Type: protocol.ContentToolCall, ToolCall: &toolCall})
 	}
 	return result, nil
 }
@@ -371,8 +371,8 @@ func decodeResponseContent(raw json.RawMessage) (string, error) {
 	return result.String(), nil
 }
 
-func convertUsage(usage openAIUsage) core.Usage {
-	return core.Usage{
+func convertUsage(usage openAIUsage) protocol.Usage {
+	return protocol.Usage{
 		InputTokens:     usage.PromptTokens,
 		OutputTokens:    usage.CompletionTokens,
 		TotalTokens:     usage.TotalTokens,
@@ -381,22 +381,22 @@ func convertUsage(usage openAIUsage) core.Usage {
 	}
 }
 
-func mapFinishReason(reason string) core.FinishReason {
+func mapFinishReason(reason string) protocol.FinishReason {
 	switch reason {
 	case "stop":
-		return core.FinishStop
+		return protocol.FinishStop
 	case "tool_calls", "function_call":
-		return core.FinishToolCalls
+		return protocol.FinishToolCalls
 	case "length":
-		return core.FinishLength
+		return protocol.FinishLength
 	case "content_filter":
-		return core.FinishContentFilter
+		return protocol.FinishContentFilter
 	case "error":
-		return core.FinishError
+		return protocol.FinishError
 	case "":
 		return ""
 	default:
-		return core.FinishOther
+		return protocol.FinishOther
 	}
 }
 
