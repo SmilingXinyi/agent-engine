@@ -207,18 +207,28 @@ func TestClientGenerateRequiresProvider(t *testing.T) {
 	}
 }
 
-func TestClientGenerateRecoversHookPanic(t *testing.T) {
+func TestClientGenerateHookPanicPropagates(t *testing.T) {
 	provider := &scriptedProvider{responses: []ModelResponse{{Message: TextMessage(RoleAssistant, "ok")}}}
 	client := NewClient(provider, Hooks{
 		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
 			panic("boom")
 		}},
 	})
-	_, err := client.Generate(context.Background(), ModelRequest{
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("expected hook panic to propagate")
+		}
+		if recovered != "boom" {
+			t.Fatalf("panic = %v, want boom", recovered)
+		}
+		if len(provider.requests) != 0 {
+			t.Fatalf("provider should not have been called, got %d requests", len(provider.requests))
+		}
+	}()
+	_, _ = client.Generate(context.Background(), ModelRequest{
 		Model:    "model",
 		Messages: []Message{TextMessage(RoleUser, "hi")},
 	})
-	if err == nil || !strings.Contains(err.Error(), "panicked") {
-		t.Fatalf("err = %v, want panic wrapped", err)
-	}
+	t.Fatal("expected hook panic to propagate")
 }

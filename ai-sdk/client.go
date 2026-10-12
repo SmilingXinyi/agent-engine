@@ -59,7 +59,7 @@ func (client *Client) call(ctx context.Context, request ModelRequest, sink Event
 		if hook == nil {
 			continue
 		}
-		if hookErr := callRequestHook(ctx, hook, requestInfo); hookErr != nil {
+		if hookErr := hook(ctx, requestInfo); hookErr != nil {
 			return ModelResponse{}, fmt.Errorf("request hook %d: %w", index, hookErr)
 		}
 	}
@@ -84,7 +84,7 @@ func (client *Client) call(ctx context.Context, request ModelRequest, sink Event
 		if hook == nil {
 			continue
 		}
-		if hookErr := callResponseHook(ctx, hook, responseInfo); hookErr != nil {
+		if hookErr := hook(ctx, responseInfo); hookErr != nil {
 			err = errors.Join(err, fmt.Errorf("response hook %d: %w", index, hookErr))
 		}
 	}
