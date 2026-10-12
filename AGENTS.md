@@ -17,20 +17,52 @@ Traditional Go community guidelines enforce strict naming conventions (e.g., low
 ### 1.3 Exported Identifiers
 - Exported types, functions, methods, and constants must still begin with a capital letter to comply with Go's language-level visibility rules. CamelCase should be used for exported symbols (e.g., `ClientFactory`, `GenerateText`).
 
-## 2. Workspace and Module Architecture
+## 2. How to Write a Go Module
 
-- The repository uses Go workspaces (`go.work`) to manage multiple modular packages.
-- Modules should remain clean, decoupled, and focused on their distinct responsibilities.
-- The `ai-sdk` module acts as the core SDK package for AI model interaction, tool calling, and agent workflows.
+The repository is a Go workspace (`go.work`). Each module is one `go.mod` and one responsibility. `ai-sdk` is the reference module: it owns model calls, tool calling, and the provider-neutral contract other modules build on.
 
-## 3. Type Definitions and Function Placement
+### 2.1 Module shape
 
-Type declarations should be readable at a glance, similar to a TypeScript `.d.ts` file. Keep definitions and behavior separated as follows.
+```
+<module>/
+  go.mod
+  protocol/
+    types.go
+    methods.go
+  <a few files for this module's own behavior>
+  utils/                  # optional; type-independent helpers only
+  <impl>/<name>/          # optional; one backend per directory
+```
 
-- `ai-sdk/protocol/types.go` contains the provider-neutral model-call contract: type declarations, constants, and interfaces only. Do not add functions or methods here.
-- `ai-sdk/protocol/methods.go` contains methods, constructors (e.g. `TextMessage`), and package-private helpers (e.g. `cloneToolCall`) for those types.
-- `ai-sdk/client.go` and `ai-sdk/hooks.go` own one model call's lifecycle. They import `protocol` and do not re-export its types.
-- `ai-sdk/utils/` contains general-purpose helpers that do not depend on `protocol` types (e.g. generic `CloneMap`). `protocol` may import `utils`, but `utils` must never import `protocol` or `ai`, or an import cycle appears.
-- Provider implementations live under `ai-sdk/providers/<name>/` and depend on `protocol`, not on the client.
-- Go requires methods to be declared in the same package as their receiver type, so protocol methods stay in package `protocol`.
-- Do not create a new file in the same directory for a single function. Add it to that package's `methods.go`, or move it to `utils/` if it is type-independent.
+In `ai-sdk`, `client.go` and `hooks.go` own one model call's lifecycle, `utils/` holds generic helpers such as `CloneMap`, and `providers/<name>/` is one provider backend.
+
+### 2.2 `protocol/` — required, exactly two source files
+
+Every module keeps its public contract in `protocol/`. That directory contains `types.go` and `methods.go`, and no other non-test source file.
+
+`types.go` is the contract, readable at a glance like a TypeScript `.d.ts` file. It holds type declarations, constants, and interfaces only. In `ai-sdk` this is the provider-neutral model-call contract.
+
+`methods.go` is the behavior for those types: methods, constructors (e.g. `TextMessage`), and unexported helpers (e.g. `cloneToolCall`). Go requires a method to live in the same package as its receiver, so protocol behavior stays in this file.
+
+A new type, constant, or interface goes in `types.go`. New behavior goes in `methods.go`. A `*_test.go` file may sit beside them when the package needs tests.
+
+`protocol` may import `utils`. It does not import the module root, hooks, or implementations. Callers import `protocol` directly and do not re-export its types.
+
+### 2.3 Stay small and follow SOLID
+
+Write the smallest module that does one job. A file should be readable in one pass. Add an abstraction only when a second caller or a second implementation needs it.
+
+- **Single responsibility.** One module changes for one reason. `protocol` defines the contract. The module root orchestrates. One implementation package serves one backend.
+- **Open/closed.** A new backend is a new directory under `<impl>/<name>/`. Existing protocol types and existing backends stay unchanged.
+- **Liskov substitution.** Every implementation is usable wherever the `protocol` interface is accepted, with the same observable contract.
+- **Interface segregation.** Interfaces in `types.go` stay small and specific to one caller need. Split an interface when callers use different slices of it.
+- **Dependency inversion.** The module root and callers depend on `protocol`. Implementations depend on `protocol`, and `protocol` does not depend on them. `utils` imports neither `protocol` nor the module root, so the dependency direction cannot cycle.
+
+### 2.4 Few files per directory
+
+A directory stays readable when each file has one job and the directory has few of them.
+
+- Add a function to the file that already owns that responsibility. In `protocol`, that file is `methods.go`. A type-independent helper goes in the matching file under `utils/`.
+- Outside `protocol`, group code by responsibility (lifecycle, hooks, one backend). The `types.go` / `methods.go` split is reserved for the contract package.
+- Keep an implementation package flat. It depends on `protocol`, not on the module root.
+- `*_test.go` files sit next to the code they test. They are the only extra files a package adds for tests.
