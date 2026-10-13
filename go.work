@@ -1,3 +1,8 @@
 go 1.25.0
 
-use ./ai-sdk
+use (
+	./agent
+	./ai-sdk
+	./ai-tool-loop
+	./mcp-runtime
+)

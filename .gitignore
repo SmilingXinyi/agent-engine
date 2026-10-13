@@ -22,11 +22,14 @@ main.exe
 *.swp
 *.swo
 
-# OS
+# macOS Finder metadata in all directories
 .DS_Store
 
 # Environment variables
 .env
+
+# Local example execution logs
+/example/agent-run.log
 
 # Reference source (read-only)
 .zip-src/
