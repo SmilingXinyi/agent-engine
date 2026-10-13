@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "disabled": false,
+      "disabledTools": ["write_file", "edit_file"],
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/tmp/workspace"
+      ],
+      "env": {},
+      "dir": "/tmp"
+    },
+    "remote": {
+      "disabled": true,
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token"
+      }
+    }
+  }
+}
