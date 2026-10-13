@@ -5,6 +5,9 @@
 ## 模块结构
 
 - `ai-sdk`: 核心 AI SDK 模块。
+- `ai-tool-loop`: 顺序模型/工具循环、生命周期 Hook 和执行记录，参见[使用说明](./ai-tool-loop/README_cn.md)。
+- `agent`: Prompt 与历史上下文组织，委托 AI Tool Loop 执行，参见[使用说明](./agent/README_cn.md)。
+- `mcp-runtime`: MCP stdio / Streamable HTTP 连接、工具发现及执行适配，参见[使用说明](./mcp-runtime/README_cn.md)。
 
 ## 开发规范
 
@@ -29,7 +32,7 @@ go work sync
 执行测试：
 
 ```bash
-go test ./...
+go test ./agent/... ./ai-sdk/... ./ai-tool-loop/... ./mcp-runtime/...
 ```
 
 ## 许可证
