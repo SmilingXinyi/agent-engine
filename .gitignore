@@ -22,7 +22,7 @@ main.exe
 *.swp
 *.swo
 
-# OS
+# macOS Finder metadata in all directories
 .DS_Store
 
 # Environment variables
