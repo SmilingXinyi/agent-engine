@@ -1,3 +1,6 @@
 go 1.25.0
 
-use ./ai-sdk
+use (
+	./ai-sdk
+	./ai-tool-loop
+)
