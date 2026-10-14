@@ -104,6 +104,16 @@ func (config Config) Validate() error {
 			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 				return fmt.Errorf("MCP server %q requires an HTTP or HTTPS URL", name)
 			}
+			for header, value := range server.Headers {
+				if header == "" || strings.Trim(header, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~") != "" {
+					return fmt.Errorf("MCP server %q has an invalid HTTP header name %q", name, header)
+				}
+				for _, character := range value {
+					if (character < ' ' && character != '\t') || character == '\x7f' {
+						return fmt.Errorf("MCP server %q header %q contains an invalid control character", name, header)
+					}
+				}
+			}
 		}
 	}
 	return nil

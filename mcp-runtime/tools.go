@@ -28,27 +28,21 @@ func sessionTools(ctx context.Context, serverName string, session *sdk.ClientSes
 		if disabled[tool.Name] {
 			continue
 		}
-		name := serverName + "_" + tool.Name
-		if len(name) > 64 || strings.Trim(name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
-			return nil, fmt.Errorf("MCP tool name %q must use 1-64 letters, digits, underscores or hyphens", name)
+		definition, err := toolDefinition(serverName, tool)
+		if err != nil {
+			return nil, err
 		}
+		name := definition.Name
 		if seen[name] {
 			return nil, fmt.Errorf("MCP server %q returned duplicate tool %q", serverName, name)
 		}
 		seen[name] = true
-		schema, err := json.Marshal(tool.InputSchema)
-		if err != nil {
-			return nil, fmt.Errorf("encode MCP tool %q schema: %w", name, err)
-		}
-		var object map[string]any
-		if json.Unmarshal(schema, &object) != nil || object == nil {
-			return nil, fmt.Errorf("MCP tool %q input schema must be a JSON object", name)
-		}
 		originalName := tool.Name
 		tools = append(tools, loopprot.Tool{
-			Definition: aiprot.ToolDefinition{Name: name, Description: tool.Description, InputSchema: schema},
+			Definition: definition,
 			Execute: func(ctx context.Context, arguments json.RawMessage) (aiprot.ToolResult, error) {
-				var object map[string]any
+				// Keep JSON values intact, including integers beyond float64 precision.
+				var object map[string]json.RawMessage
 				if json.Unmarshal(arguments, &object) != nil || object == nil {
 					return aiprot.ToolResult{}, fmt.Errorf("MCP tool %q arguments must be a JSON object", name)
 				}
@@ -61,6 +55,25 @@ func sessionTools(ctx context.Context, serverName string, session *sdk.ClientSes
 		})
 	}
 	return tools, nil
+}
+
+func toolDefinition(serverName string, tool *sdk.Tool) (aiprot.ToolDefinition, error) {
+	name := serverName + "_" + tool.Name
+	if len(name) > 64 || strings.Trim(name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
+		return aiprot.ToolDefinition{}, fmt.Errorf("MCP tool name %q must use 1-64 letters, digits, underscores or hyphens", name)
+	}
+	schema, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		return aiprot.ToolDefinition{}, fmt.Errorf("encode MCP tool %q schema: %w", name, err)
+	}
+	var object map[string]any
+	if json.Unmarshal(schema, &object) != nil || object == nil {
+		return aiprot.ToolDefinition{}, fmt.Errorf("MCP tool %q input schema must be a JSON object", name)
+	}
+	if schemaType, exists := object["type"]; exists && schemaType != "object" {
+		return aiprot.ToolDefinition{}, fmt.Errorf("MCP tool %q input schema type must be object", name)
+	}
+	return aiprot.ToolDefinition{Name: name, Description: tool.Description, InputSchema: schema}, nil
 }
 
 // toolResult retains text directly and serializes other MCP content as JSON

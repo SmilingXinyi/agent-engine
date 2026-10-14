@@ -18,6 +18,10 @@ func TestConfigRejectsInvalidServers(t *testing.T) {
 		`{"servers":{"bad":{"url":"file:///tmp/mcp"}}}`,
 		`{"servers":{"bad":{"url":"https:///mcp"}}}`,
 		`{"servers":{"bad name":{"command":"echo"}}}`,
+		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","headers":{"Bad Header":"value"}}}}`,
+		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","headers":{"":"value"}}}}`,
+		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","headers":{"X-Test":"value\r\ninjected"}}}}`,
+		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","headers":{"X-Test":"value\u0000"}}}}`,
 	} {
 		if _, err := ParseConfig(content); err == nil {
 			t.Fatalf("expected configuration error for %s", content)
