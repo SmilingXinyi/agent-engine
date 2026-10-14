@@ -20,7 +20,7 @@ import (
 // Exercise the real example entrypoint against local model/MCP servers. No
 // external API credentials, npx subprocess or connected mobile device is used.
 func TestRunWithLocalModelAndMCP(t *testing.T) {
-	for _, mode := range []string{"success", "permission failure", "max steps"} {
+	for _, mode := range []string{"success", "skills", "permission failure", "max steps"} {
 		t.Run(mode, func(t *testing.T) {
 			for _, name := range []string{"AGENT_MODEL", "AGENT_LLM_MODEL", "AGENT_LLM_TOKEN", "AGENT_LLM_API_KEY", "AGENT_LLM_BASE_URL"} {
 				t.Setenv(name, "")
@@ -49,6 +49,11 @@ func TestRunWithLocalModelAndMCP(t *testing.T) {
 						Role    string `json:"role"`
 						Content string `json:"content"`
 					} `json:"messages"`
+					Tools []struct {
+						Function struct {
+							Name string `json:"name"`
+						} `json:"function"`
+					} `json:"tools"`
 				}
 				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 					t.Error(err)
@@ -59,14 +64,32 @@ func TestRunWithLocalModelAndMCP(t *testing.T) {
 					t.Errorf("model=%q", payload.Model)
 				}
 				writer.Header().Set("Content-Type", "application/json")
-				if modelCalls.Add(1) == 1 {
-					if len(payload.Messages) != 2 || payload.Messages[1].Content != "test prompt" {
-						t.Errorf("messages=%#v", payload.Messages)
+				callNumber := modelCalls.Add(1)
+				if mode == "skills" && callNumber == 1 {
+					if len(payload.Tools) != 2 || payload.Tools[1].Function.Name != "get_skill" || !strings.Contains(payload.Messages[0].Content, "demo description") || strings.Contains(payload.Messages[0].Content, "Inspect before clicking") {
+						t.Errorf("skills were not progressively exposed: %#v", payload)
+					}
+					fmt.Fprint(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"skill-call","type":"function","function":{"name":"get_skill","arguments":"{\"name\":\"demo\"}"}}]},"finish_reason":"tool_calls"}]}`)
+					return
+				}
+				if callNumber == 1 || (mode == "skills" && callNumber == 2) {
+					if mode == "skills" {
+						if len(payload.Messages) != 4 || !strings.Contains(payload.Messages[3].Content, "Inspect before clicking") {
+							t.Errorf("skill result=%#v", payload.Messages)
+						}
+					} else {
+						if len(payload.Messages) != 2 || payload.Messages[1].Content != "test prompt" {
+							t.Errorf("messages=%#v", payload.Messages)
+						}
 					}
 					fmt.Fprint(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"echo-call","type":"function","function":{"name":"mobile-mcp_echo","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)
 					return
 				}
-				if len(payload.Messages) != 4 || payload.Messages[3].Role != "tool" || payload.Messages[3].Content != "hello" {
+				messageCount := 4
+				if mode == "skills" {
+					messageCount = 6
+				}
+				if len(payload.Messages) != messageCount || payload.Messages[len(payload.Messages)-1].Role != "tool" || payload.Messages[len(payload.Messages)-1].Content != "hello" {
 					t.Errorf("follow-up=%#v", payload.Messages)
 				}
 				fmt.Fprint(writer, `{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}`)
@@ -88,13 +111,27 @@ func TestRunWithLocalModelAndMCP(t *testing.T) {
 				}
 			}
 			maxSteps := 4
+			skillsPath := ""
+			if mode == "skills" {
+				skillsPath = filepath.Join(directory, "skills")
+				if err := os.MkdirAll(filepath.Join(skillsPath, "demo"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(skillsPath, "demo", "SKILL.md"), []byte("---\nname: demo\ndescription: demo description\n---\nInspect before clicking"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if mode == "max steps" {
 				maxSteps = 1
 			}
-			err = run(filepath.Join(directory, "prompt.md"), filepath.Join(directory, "mcp.json"), filepath.Join(directory, ".env"), maxSteps, 10*time.Second)
+			err = run(filepath.Join(directory, "prompt.md"), filepath.Join(directory, "mcp.json"), filepath.Join(directory, ".env"), skillsPath, maxSteps, 10*time.Second)
 			switch mode {
 			case "success":
 				if err != nil || modelCalls.Load() != 2 || toolCalls.Load() != 1 {
+					t.Fatalf("error=%v models=%d tools=%d", err, modelCalls.Load(), toolCalls.Load())
+				}
+			case "skills":
+				if err != nil || modelCalls.Load() != 3 || toolCalls.Load() != 1 {
 					t.Fatalf("error=%v models=%d tools=%d", err, modelCalls.Load(), toolCalls.Load())
 				}
 			case "permission failure":

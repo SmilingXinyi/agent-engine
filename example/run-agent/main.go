@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/SmilingXinyi/agent-engine/agent"
+	agentskill "github.com/SmilingXinyi/agent-engine/agent-skill"
 	agentprot "github.com/SmilingXinyi/agent-engine/agent/protocol"
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
@@ -28,16 +29,17 @@ func main() {
 	promptPath := flag.String("prompt", "example/prompt.md", "user prompt file")
 	configPath := flag.String("config", "example/.agents/mcp.json", "MCP configuration file")
 	envPath := flag.String("env", ".env", "model environment file")
+	skillsPath := flag.String("skills", "", "optional directory containing SKILL.md files")
 	maxSteps := flag.Int("max-steps", 40, "maximum model calls")
 	timeout := flag.Duration("timeout", 15*time.Minute, "execution timeout")
 	flag.Parse()
-	if err := run(*promptPath, *configPath, *envPath, *maxSteps, *timeout); err != nil {
+	if err := run(*promptPath, *configPath, *envPath, *skillsPath, *maxSteps, *timeout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(promptPath, configPath, envPath string, maxSteps int, timeout time.Duration) (err error) {
+func run(promptPath, configPath, envPath, skillsPath string, maxSteps int, timeout time.Duration) (err error) {
 	if err := loadEnv(envPath); err != nil {
 		return err
 	}
@@ -50,6 +52,22 @@ func run(promptPath, configPath, envPath string, maxSteps int, timeout time.Dura
 	prompt, err := os.ReadFile(promptPath)
 	if err != nil {
 		return err
+	}
+	systemPrompt := "你是通过 MCP 工具操作手机的执行助手。根据实际工具结果完成用户任务，确认结果后再报告。"
+	var skillTools []loopprot.Tool
+	if skillsPath != "" {
+		skills, err := agentskill.Load(skillsPath)
+		if err != nil {
+			return err
+		}
+		if len(skills) > 0 {
+			tool, err := agentskill.NewTool(skills)
+			if err != nil {
+				return err
+			}
+			skillTools = append(skillTools, tool)
+			systemPrompt += "\n\n" + agentskill.BuildListing(skills)
+		}
 	}
 	config, err := mcpprot.LoadConfig(configPath)
 	if err != nil {
@@ -86,8 +104,8 @@ func run(promptPath, configPath, envPath string, maxSteps int, timeout time.Dura
 	})
 	response, err := agent.New(client).Execute(ctx, agentprot.Request{
 		Model:        model,
-		SystemPrompt: "你是通过 MCP 工具操作手机的执行助手。根据实际工具结果完成用户任务，确认结果后再报告。",
-		UserPrompt:   string(prompt), Tools: runtime.Tools,
+		SystemPrompt: systemPrompt,
+		UserPrompt:   string(prompt), Tools: append(runtime.Tools, skillTools...),
 		Options: loopprot.RunOptions{MaxSteps: maxSteps, Hooks: executionHooks()},
 	})
 	fmt.Printf("\nFinal response:\n%s\nStop reason: %s; model calls: %d; total tokens: %d\n", response.LastResponse.Message.Text(), response.StopReason, step, response.Usage.TotalTokens)

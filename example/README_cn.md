@@ -30,12 +30,22 @@ go run ./example/run-agent/main.go
 
 可通过 `-prompt`、`-config`、`-env`、`-max-steps`、`-timeout` 调整。进程环境变量优先于 `.env`；模型名也支持 `AGENT_MODEL`，密钥也支持 `AGENT_LLM_TOKEN`。
 
+可选加载本地技能目录：
+
+```bash
+go run ./example/run-agent/main.go -skills example/.agents/skills
+```
+
+示例目录包含 `mobile-popup` 技能。设置 `-skills` 后，目录元数据加入 SystemPrompt，`get_skill` 与 MCP 工具一起注册；正文由模型按需读取。不传该参数时保持原有执行方式。默认调用上限仍为 40，总超时仍为 15 分钟。
+
 ## 本地测试
 
 ```bash
-go test ./ai-sdk/... ./ai-tool-loop/... ./agent/... ./mcp-runtime/...
+go test ./ai-sdk/... ./ai-tool-loop/... ./agent/... ./agent-skill/... ./mcp-runtime/...
 go test ./example/run-agent/*.go
 go test ./example/verify-mcp.go
 ```
 
 示例测试使用本地模拟模型及 MCP HTTP 服务器，不使用真实 API Key、付费模型或手机。`StopNatural` 只表示模型停止请求工具，业务是否完成仍需结合最终回复和实际工具结果判断。达到调用上限时，示例以非零退出码报告未完成。
+
+技能集成测试覆盖：目录进入 system → 模型请求 get_skill → 正文回传 → MCP 工具执行 → 最终回答。
