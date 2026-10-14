@@ -41,6 +41,8 @@ func main() {
 
 返回值为 `ai-tool-loop/protocol.Result`。`LastResponse` 保留最后一次模型响应及其单次 usage；`Usage` 累计全部模型调用。`Messages`、`Steps`、`ToolCalls` 保存执行记录，`StopReason` 描述循环停止原因。Agent 不保存跨请求历史，调用方通过 `History` 传入 SDK 消息。Provider 和模型请求/响应 hooks 仍由 SDK Client 配置。
 
+历史中的工具调用必须由 assistant 发起，并有 ID、名称匹配的 tool 结果；整批结果完成后才能出现下一条对话消息。孤立结果、重复结果、缺失结果、错误角色和 nil 工具内容会在调用模型前被拒绝。Agent 不裁剪历史、不提取或覆盖其中的 system 消息。失败或 MaxSteps 返回的部分记录可能包含未完成工具批次，调用方不能直接把它当作完整历史重放。
+
 ## MCP 工具
 
 使用独立的 [`mcp-runtime`](../mcp-runtime/README_cn.md) 模块连接 MCP 服务器，将 `runtime.Tools` 传入 `Request.Tools`。Agent 不依赖 MCP SDK，也可以接收自行定义的 `ai-tool-loop/protocol.Tool`。

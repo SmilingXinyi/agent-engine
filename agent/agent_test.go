@@ -84,7 +84,7 @@ func TestExecuteRejectsInvalidInput(t *testing.T) {
 		t.Fatal("unexpected call")
 		return aiprot.ModelResponse{}, nil
 	}}, aiprot.Hooks{}))
-	for _, request := range []protocol.Request{{Model: " ", UserPrompt: "hello"}, {Model: "model"}, {Model: "model", History: []aiprot.Message{{Role: aiprot.RoleUser}}}, {Model: "model", UserPrompt: "hello", Options: loopprot.RunOptions{MaxSteps: -1}}} {
+	for _, request := range []protocol.Request{{Model: " ", UserPrompt: "hello"}, {Model: "model"}, {Model: "model", History: []aiprot.Message{{Role: aiprot.RoleUser}}}, {Model: "model", UserPrompt: "hello", Options: loopprot.RunOptions{MaxSteps: -1}}, {Model: "model", UserPrompt: "next", History: []aiprot.Message{{Role: aiprot.RoleTool}}}} {
 		result, err := assistant.Execute(context.Background(), request)
 		if err == nil || result.StopReason != loopprot.StopError {
 			t.Fatalf("result=%#v error=%v", result, err)
