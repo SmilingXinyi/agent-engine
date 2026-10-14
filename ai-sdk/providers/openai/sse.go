@@ -4,122 +4,111 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
 	"github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
-var errSSEComplete = errors.New("SSE complete")
+// sseReader owns only the current frame and a bounded read buffer. Transport
+// reads may contain many frames; next still returns exactly one of them.
+type sseReader struct {
+	reader   *bufio.Reader
+	maxFrame int64
+	maxTotal int64
+	total    int64
+	first    bool
+}
 
-// readSSE bounds an entire event (not just one line) and keeps exact framing.
-// It accepts a final unterminated frame at clean EOF for compatible services.
-func (provider *Provider) readSSE(ctx context.Context, body io.Reader, consume func(RawEvent) error) error {
-	reader := bufio.NewReader(body)
+func (reader *sseReader) next(ctx context.Context) (protocol.StreamChunk, error) {
 	var frame []byte
-	var total int64
-	dispatch := func() error {
-		if len(frame) == 0 {
-			return nil
+	lineStart := 0
+	appendByte := func(value byte) error {
+		reader.total++
+		if reader.maxTotal > 0 && reader.total > reader.maxTotal {
+			return &protocol.Error{Code: protocol.ErrorResponseTooLarge, Message: fmt.Sprintf("stream exceeds %d bytes", reader.maxTotal)}
 		}
-		event := parseSSEFrame(frame)
-		frame = nil
-		if err := ctx.Err(); err != nil {
-			return err
+		if int64(len(frame))+1 > reader.maxFrame {
+			return &protocol.Error{Code: protocol.ErrorResponseTooLarge, Message: fmt.Sprintf("SSE frame exceeds %d bytes", reader.maxFrame)}
 		}
-		if provider.onRawEvent != nil {
-			observed := event
-			observed.Frame = bytes.Clone(event.Frame)
-			observed.Data = bytes.Clone(event.Data)
-			if err := provider.onRawEvent(ctx, observed); err != nil {
-				return &protocol.Error{Code: protocol.ErrorSink, Message: "raw event callback: " + err.Error(), Cause: err}
-			}
-		}
-		return consume(event)
+		frame = append(frame, value)
+		return nil
 	}
 	for {
-		if err := ctx.Err(); err != nil {
-			return err
+		if reader.reader.Buffered() == 0 {
+			if err := ctx.Err(); err != nil {
+				return protocol.StreamChunk{}, err
+			}
 		}
-		var line []byte
-		var readErr error
-		for {
-			fragment, err := reader.ReadSlice('\n')
-			total += int64(len(fragment))
-			if provider.maxStreamBytes > 0 && total > provider.maxStreamBytes {
-				return &protocol.Error{Code: protocol.ErrorResponseTooLarge, Message: fmt.Sprintf("stream exceeds %d bytes", provider.maxStreamBytes)}
+		value, err := reader.reader.ReadByte()
+		if err != nil {
+			if err == io.EOF && len(frame) > 0 {
+				return reader.chunk(frame), nil
 			}
-			if int64(len(frame)+len(line)+len(fragment)) > provider.maxEventBytes {
-				return &protocol.Error{Code: protocol.ErrorResponseTooLarge, Message: fmt.Sprintf("SSE event exceeds %d bytes", provider.maxEventBytes)}
-			}
-			line = append(line, fragment...)
-			if err == bufio.ErrBufferFull {
-				continue
-			}
-			readErr = err
-			break
+			return protocol.StreamChunk{}, err
 		}
-		frame = append(frame, line...)
-		if bytes.Equal(line, []byte("\n")) || bytes.Equal(line, []byte("\r\n")) {
-			if err := dispatch(); err != nil {
-				if errors.Is(err, errSSEComplete) {
-					return nil
+		blankLine := len(frame) == lineStart || (reader.first && lineStart == 0 && bytes.Equal(frame, []byte{0xef, 0xbb, 0xbf}))
+		if err := appendByte(value); err != nil {
+			return protocol.StreamChunk{}, err
+		}
+		if value != '\r' && value != '\n' {
+			continue
+		}
+		if value == '\r' {
+			// A CRLF split across HTTP reads still belongs to this frame.
+			if next, _ := reader.reader.Peek(1); len(next) == 1 && next[0] == '\n' {
+				_, _ = reader.reader.ReadByte()
+				if err := appendByte('\n'); err != nil {
+					return protocol.StreamChunk{}, err
 				}
-				return err
 			}
 		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				return readErr
-			}
-			if err := dispatch(); err != nil && !errors.Is(err, errSSEComplete) {
-				return err
-			}
-			return nil
+		if blankLine {
+			return reader.chunk(frame), nil
 		}
+		lineStart = len(frame)
 	}
 }
 
-func parseSSEFrame(frame []byte) RawEvent {
-	event := RawEvent{Frame: frame}
+func (reader *sseReader) chunk(frame []byte) protocol.StreamChunk {
+	chunk := protocol.StreamChunk{Frame: frame}
+	remaining := frame
+	if reader.first {
+		remaining = bytes.TrimPrefix(remaining, []byte{0xef, 0xbb, 0xbf})
+		reader.first = false
+	}
 	var data [][]byte
-	for _, rawLine := range bytes.Split(frame, []byte("\n")) {
-		line := bytes.TrimSuffix(rawLine, []byte("\r"))
+	for len(remaining) > 0 {
+		end := bytes.IndexAny(remaining, "\r\n")
+		line := remaining
+		if end < 0 {
+			remaining = nil
+		} else {
+			line, remaining = remaining[:end], remaining[end:]
+			if bytes.HasPrefix(remaining, []byte("\r\n")) {
+				remaining = remaining[2:]
+			} else {
+				remaining = remaining[1:]
+			}
+		}
 		if len(line) == 0 || line[0] == ':' {
 			continue
 		}
-		field, value, found := bytes.Cut(line, []byte(":"))
-		if !found {
-			value = nil
-		}
+		field, value, _ := bytes.Cut(line, []byte(":"))
 		value = bytes.TrimPrefix(value, []byte(" "))
 		switch string(field) {
 		case "event":
-			event.Name = string(value)
+			chunk.Event = string(value)
 		case "id":
 			if !bytes.ContainsRune(value, '\x00') {
-				event.ID = string(value)
+				chunk.ID = string(value)
 			}
 		case "data":
 			data = append(data, value)
 		}
 	}
 	if len(data) > 0 {
-		event.Data = bytes.Join(data, []byte("\n"))
+		chunk.Data = bytes.Join(data, []byte("\n"))
 	}
-	return event
-}
-
-func emitEvent(ctx context.Context, sink protocol.EventSink, event protocol.StreamEvent) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if sink == nil {
-		return nil
-	}
-	if err := sink.OnEvent(ctx, event); err != nil {
-		return &protocol.Error{Code: protocol.ErrorSink, Message: "stream event callback: " + err.Error(), Cause: err}
-	}
-	return nil
+	return chunk
 }

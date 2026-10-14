@@ -56,6 +56,6 @@ RunStart → StepStart → SDK.OnRequest/OnResponse
 
 验证失败尚未进入生命周期时不触发 Hooks。进入生命周期后，即使 Start Hook 失败，也会触发对应 End；结束 Hook 错误与原错误合并。普通工具错误交由模型处理，需要停止时可在 ToolEnd Hook 根据 `info.Error` 或 `info.Result.IsError` 返回错误。
 
-每次运行自动生成 RunID，每步生成 RequestID，SDK 请求 metadata 包含 `run_id`、`request_id`、`step`。SDK 请求/响应日志继续使用 `ai.Hooks`，可由 RequestID 与循环记录关联。
+每次运行自动生成 RunID，每步生成 RequestID，SDK 请求 metadata 包含 `run_id`、`request_id`、`step`。SDK 请求/响应日志继续使用 `aiprot.Hooks`，可由 RequestID 与循环记录关联。
 
 本期仅提供非流式顺序执行，没有并行、外部工具占位、执行参数改写或续接接口；会话持久化、截图编码和业务判断由其他层负责。

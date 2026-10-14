@@ -90,7 +90,7 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 	}
 	modelRequest := aiprot.ModelRequest{
 		Model: request.Model, Messages: utils.Clone(result.Messages),
-		Metadata: map[string]string{"run_id": result.RunID, ai.RequestIDMetadataKey: requestID, "step": strconv.Itoa(step)},
+		Metadata: map[string]string{"run_id": result.RunID, aiprot.RequestIDMetadataKey: requestID, "step": strconv.Itoa(step)},
 	}
 	for _, tool := range request.Tools {
 		modelRequest.Tools = append(modelRequest.Tools, utils.Clone(tool.Definition))

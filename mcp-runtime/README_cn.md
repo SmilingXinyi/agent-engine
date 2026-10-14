@@ -17,6 +17,7 @@ import (
     "github.com/SmilingXinyi/agent-engine/agent"
     agentprot "github.com/SmilingXinyi/agent-engine/agent/protocol"
     ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
+    aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
     loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
     "github.com/SmilingXinyi/agent-engine/ai-sdk/providers/openai"
     mcpruntime "github.com/SmilingXinyi/agent-engine/mcp-runtime"
@@ -44,7 +45,7 @@ func main() {
     if err != nil {
         panic(err)
     }
-    assistant := agent.New(ai.NewClient(provider, ai.Hooks{}))
+    assistant := agent.New(ai.NewClient(provider, aiprot.Hooks{}))
     response, err := assistant.Execute(ctx, agentprot.Request{
         Model: os.Getenv("AGENT_MODEL"),
         SystemPrompt: "你是一个助手，可以使用工具读取文件。",

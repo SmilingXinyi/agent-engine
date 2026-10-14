@@ -1,232 +1,218 @@
 package openai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
-	"sort"
-	"strings"
+	"sync"
 
-	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
+	"github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
-type streamChunk struct {
-	ID      string      `json:"id"`
-	Model   string      `json:"model"`
-	Created int64       `json:"created"`
-	Usage   openAIUsage `json:"usage"`
-	Choices []struct {
-		Index int `json:"index"`
-		Delta struct {
-			Role             string         `json:"role"`
-			Content          string         `json:"content"`
-			ReasoningContent string         `json:"reasoning_content"`
-			Reasoning        string         `json:"reasoning"`
-			ToolCalls        []chatToolCall `json:"tool_calls"`
-		} `json:"delta"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
-type toolCallBuilder struct {
-	id        string
-	name      strings.Builder
-	arguments strings.Builder
-}
-
-type streamAccumulator struct {
-	text         strings.Builder
-	reasoning    strings.Builder
-	toolCalls    map[int]*toolCallBuilder
-	providerName string
-	finishReason protocol.FinishReason
-	usage        protocol.Usage
-	id           string
-	model        string
-	created      int64
-}
-
-// Stream returns partial content with Complete=false on any error. A successful
-// call emits EventFinish once, after all deltas and usage have been delivered.
-func (provider *Provider) Stream(ctx context.Context, request protocol.ModelRequest, sink protocol.EventSink) (result protocol.ModelResponse, err error) {
+// Stream validates the HTTP response without reading its successful body. Next
+// delivers original SSE frames without normalizing or accumulating model output.
+func (provider *Provider) Stream(ctx context.Context, request protocol.ModelRequest) (protocol.Stream, error) {
 	payload, err := provider.buildRequest(request, true)
 	if err != nil {
-		return result, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
+		return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return result, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
+		return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
-	response, info, err := provider.send(ctx, encoded, true)
-	result.CallInfo = info
+	streamContext, cancel := context.WithCancel(ctx)
+	response, info, err := provider.send(streamContext, encoded, true)
 	if err != nil {
-		return result, err
+		cancel()
+		return nil, err
 	}
-	defer response.Body.Close()
 	if err = provider.validateHTTPResponse(response, info); err != nil {
-		return result, err
+		cancel()
+		return nil, errors.Join(err, response.Body.Close())
 	}
-	if provider.apiType == APITypeResponsesAPI {
-		result, err = provider.streamResponses(ctx, response.Body, sink)
-	} else {
-		result, err = provider.streamChat(ctx, response.Body, sink)
-	}
-	result.CallInfo = info
-	if err != nil {
-		result.Complete = false
-		return result, provider.failure(err, protocol.ErrorTransport, info)
-	}
-	if result.FinishReason == protocol.FinishError {
-		return result, provider.failure(fmt.Errorf("upstream reported a stream failure"), protocol.ErrorUpstream, info)
-	}
-	if err = emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventFinish, FinishReason: result.FinishReason}); err != nil {
-		result.Complete = false
-		return result, provider.failure(err, protocol.ErrorSink, info)
-	}
-	result.Complete = true
-	return result, nil
+	return &responseStream{
+		provider: provider, ctx: streamContext, cancel: cancel, body: response.Body,
+		reader: sseReader{reader: bufio.NewReader(response.Body), maxFrame: provider.maxEventBytes, maxTotal: provider.maxStreamBytes, first: true},
+		info:   protocol.StreamInfo{CallInfo: info},
+	}, nil
 }
 
-func (provider *Provider) streamChat(ctx context.Context, body io.Reader, sink protocol.EventSink) (protocol.ModelResponse, error) {
-	accumulator := streamAccumulator{toolCalls: make(map[int]*toolCallBuilder), providerName: provider.name}
-	receivedDone := false
-	err := provider.readSSE(ctx, body, func(event RawEvent) error {
-		if len(event.Data) == 0 {
-			return nil
+// Only Next touches the reader. The mutex protects publication and terminal
+// state, never a blocking Read, so Close can interrupt Next without a goroutine.
+type responseStream struct {
+	provider        *Provider
+	ctx             context.Context
+	cancel          context.CancelFunc
+	body            io.ReadCloser
+	reader          sseReader
+	mu              sync.Mutex
+	chunk           protocol.StreamChunk
+	info            protocol.StreamInfo
+	err             error
+	hasFinishReason bool
+	closeOnce       sync.Once
+	closeErr        error
+}
+
+func (stream *responseStream) Next() bool {
+	stream.mu.Lock()
+	stream.chunk = protocol.StreamChunk{}
+	ended := stream.endedLocked()
+	stream.mu.Unlock()
+	var chunk protocol.StreamChunk
+	var readErr error
+	if !ended {
+		chunk, readErr = stream.reader.next(stream.ctx)
+	}
+
+	hasChunk := false
+	stream.mu.Lock()
+	if !stream.endedLocked() {
+		if stream.ctx.Err() != nil {
+			readErr = stream.ctx.Err()
 		}
-		if bytes.Equal(bytes.TrimSpace(event.Data), []byte("[DONE]")) {
-			receivedDone = true
-			return errSSEComplete
+		if readErr != nil {
+			stream.endLocked(false, readErr)
+		} else {
+			stream.chunk, hasChunk = chunk, true
+			if terminal, complete, err := stream.inspect(chunk); terminal {
+				stream.endLocked(complete, err)
+			}
 		}
-		var chunk streamChunk
-		if err := json.Unmarshal(event.Data, &chunk); err != nil {
-			return &protocol.Error{Code: protocol.ErrorDecode, Message: err.Error(), Cause: err}
+	}
+	ended = stream.endedLocked()
+	stream.mu.Unlock()
+	if ended {
+		_ = stream.closeBody()
+	}
+	return hasChunk
+}
+
+func (stream *responseStream) Chunk() protocol.StreamChunk {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.chunk
+}
+
+func (stream *responseStream) Info() protocol.StreamInfo {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.info.Clone()
+}
+
+func (stream *responseStream) Err() error {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.err
+}
+
+// Close returns body-close errors. Early-close cancellation is reported by Err.
+func (stream *responseStream) Close() error {
+	stream.mu.Lock()
+	stream.endLocked(false, context.Canceled)
+	stream.mu.Unlock()
+	return stream.closeBody()
+}
+
+// endLocked is the single state transition for EOF, terminal frames, failures
+// and cancellation. The caller holds mu; body closing happens outside the lock.
+func (stream *responseStream) endLocked(complete bool, err error) {
+	if stream.endedLocked() {
+		return
+	}
+	if err == io.EOF {
+		complete = stream.provider.apiType == APITypeChatCompletions && stream.hasFinishReason && !stream.provider.requireDone
+		err = nil
+		if !complete {
+			err = &protocol.Error{Code: protocol.ErrorStreamIncomplete, Message: "stream ended without its protocol terminal condition"}
 		}
-		if chunk.Error != nil {
-			return &protocol.Error{Code: protocol.ErrorUpstream, Message: chunk.Error.Message}
+	}
+	stream.info.Complete = complete
+	if err != nil {
+		stream.err = stream.failure(err)
+	}
+}
+
+// Terminal state is already represented by completion or failure; it does not
+// need a separate mutable flag. The caller holds mu.
+func (stream *responseStream) endedLocked() bool {
+	return stream.info.Complete || stream.err != nil
+}
+
+func (stream *responseStream) closeBody() error {
+	stream.closeOnce.Do(func() {
+		stream.cancel()
+		stream.closeErr = stream.body.Close()
+		if stream.closeErr != nil {
+			stream.mu.Lock()
+			stream.err = errors.Join(stream.err, stream.failure(stream.closeErr))
+			stream.mu.Unlock()
 		}
-		return accumulator.consume(ctx, chunk, sink)
 	})
-	result := accumulator.response()
-	if err != nil {
-		return result, err
-	}
-	if !receivedDone && (provider.requireDone || accumulator.finishReason == "") {
-		return result, &protocol.Error{Code: protocol.ErrorStreamIncomplete, Message: "stream ended without [DONE] or a finish reason"}
-	}
-	if result.FinishReason == "" {
-		result.FinishReason = protocol.FinishStop
-	}
-	return result, nil
+	return stream.closeErr
 }
 
-func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamChunk, sink protocol.EventSink) error {
-	if chunk.ID != "" {
-		accumulator.id = chunk.ID
-	}
-	if chunk.Model != "" {
-		accumulator.model = chunk.Model
-	}
-	if chunk.Created != 0 {
-		accumulator.created = chunk.Created
-	}
-	if chunk.Usage.TotalTokens != 0 || chunk.Usage.PromptTokens != 0 || chunk.Usage.CompletionTokens != 0 {
-		accumulator.usage = convertUsage(chunk.Usage)
-		if sink != nil {
-			usage := accumulator.usage
-			if err := emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventUsage, Usage: &usage}); err != nil {
-				return fmt.Errorf("stream usage event: %w", err)
-			}
-		}
-	}
-	for _, choice := range chunk.Choices {
-		if choice.Index != 0 {
-			continue
-		}
-		if choice.Delta.Content != "" {
-			accumulator.text.WriteString(choice.Delta.Content)
-			if sink != nil {
-				if err := emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventTextDelta, Delta: choice.Delta.Content}); err != nil {
-					return fmt.Errorf("stream text event: %w", err)
-				}
-			}
-		}
-		reasoning := choice.Delta.ReasoningContent
-		if reasoning == "" {
-			reasoning = choice.Delta.Reasoning
-		}
-		if reasoning != "" {
-			accumulator.reasoning.WriteString(reasoning)
-			if sink != nil {
-				if err := emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventReasoningDelta, Delta: reasoning}); err != nil {
-					return fmt.Errorf("stream reasoning event: %w", err)
-				}
-			}
-		}
-		for _, delta := range choice.Delta.ToolCalls {
-			builder := accumulator.toolCalls[delta.Index]
-			if builder == nil {
-				builder = &toolCallBuilder{}
-				accumulator.toolCalls[delta.Index] = builder
-			}
-			if delta.ID != "" {
-				builder.id = delta.ID
-			}
-			builder.name.WriteString(delta.Function.Name)
-			builder.arguments.WriteString(delta.Function.Arguments)
-			if sink != nil {
-				event := protocol.StreamEvent{
-					Type: protocol.EventToolCallDelta,
-					ToolCallDelta: &protocol.ToolCallDelta{
-						Index: delta.Index, ID: delta.ID, Name: delta.Function.Name,
-						ArgumentsDelta: delta.Function.Arguments,
-					},
-				}
-				if err := sink.OnEvent(ctx, event); err != nil {
-					return fmt.Errorf("stream tool call event: %w", err)
-				}
-			}
-		}
-		if choice.FinishReason != "" {
-			accumulator.finishReason = mapFinishReason(choice.FinishReason)
-		}
-	}
-	return nil
+func (stream *responseStream) failure(err error) error {
+	return stream.provider.failure(err, protocol.ErrorTransport, stream.info.CallInfo)
 }
 
-func (accumulator *streamAccumulator) response() protocol.ModelResponse {
-	message := protocol.Message{Role: protocol.RoleAssistant}
-	if accumulator.text.Len() > 0 {
-		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentText, Text: accumulator.text.String()})
-	}
-	if accumulator.reasoning.Len() > 0 {
-		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentReasoning, Text: accumulator.reasoning.String()})
-	}
-	indexes := make([]int, 0, len(accumulator.toolCalls))
-	for index := range accumulator.toolCalls {
-		indexes = append(indexes, index)
-	}
-	sort.Ints(indexes)
-	for _, index := range indexes {
-		builder := accumulator.toolCalls[index]
-		call := protocol.ToolCall{
-			ID: builder.id, Name: builder.name.String(), Arguments: json.RawMessage(builder.arguments.String()),
+// inspect reads only termination/error markers. Arbitrary and non-JSON payloads
+// remain visible. Model content is not decoded or schema-validated. Inspection
+// precedes publication, so caller mutation cannot change protocol state.
+func (stream *responseStream) inspect(chunk protocol.StreamChunk) (terminal, complete bool, err error) {
+	if bytes.Equal(bytes.TrimSpace(chunk.Data), []byte("[DONE]")) {
+		if stream.provider.apiType == APITypeChatCompletions {
+			return true, true, nil
 		}
-		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentToolCall, ToolCall: &call})
+		return true, false, &protocol.Error{Code: protocol.ErrorStreamIncomplete, Message: "Responses stream ended without a terminal response event"}
 	}
-	finishReason := accumulator.finishReason
-
-	return protocol.ModelResponse{
-		Message:      message,
-		FinishReason: finishReason,
-		Usage:        accumulator.usage,
-		Metadata: responseMetadata(
-			accumulator.providerName, accumulator.id, accumulator.model, accumulator.created,
-		),
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(chunk.Data, &fields)
+	event := chunk.Event
+	if event == "" {
+		_ = json.Unmarshal(fields["type"], &event)
 	}
+	failed := event == "error" || (stream.provider.apiType == APITypeResponsesAPI && event == "response.failed")
+	// Raw fields already came from valid JSON; an object needs no second decode.
+	if rawError := bytes.TrimSpace(fields["error"]); len(rawError) > 0 && rawError[0] == '{' {
+		failed = true
+	}
+	if failed {
+		message := "upstream stream failed"
+		var response struct {
+			Error json.RawMessage `json:"error"`
+		}
+		_ = json.Unmarshal(fields["response"], &response)
+		for _, raw := range []json.RawMessage{response.Error, fields["error"]} {
+			var detail struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(raw, &detail) == nil && detail.Message != "" {
+				message = detail.Message
+			}
+		}
+		return true, false, &protocol.Error{Code: protocol.ErrorUpstream, Message: message, Body: bytes.Clone(chunk.Data)}
+	}
+	if stream.provider.apiType == APITypeResponsesAPI {
+		if event == "response.completed" || event == "response.incomplete" {
+			return true, true, nil
+		}
+	} else {
+		var choices []struct {
+			FinishReason *string `json:"finish_reason"`
+		}
+		_ = json.Unmarshal(fields["choices"], &choices)
+		for _, choice := range choices {
+			if choice.FinishReason != nil && *choice.FinishReason != "" {
+				if *choice.FinishReason == "error" {
+					return true, false, &protocol.Error{Code: protocol.ErrorUpstream, Message: "upstream reported a failed completion", Body: bytes.Clone(chunk.Data)}
+				}
+				stream.hasFinishReason = true
+			}
+		}
+	}
+	return false, false, nil
 }

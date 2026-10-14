@@ -57,7 +57,7 @@ func TestHookErrorsAndPanicsStopAndPairLifecycle(t *testing.T) {
 					}
 					return toolResponse(call("first"), call("second")), nil
 				}}
-				result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(context.Background(), request)
+				result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
 				if err == nil || !strings.Contains(err.Error(), "hook failed") || result.StopReason != protocol.StopError {
 					t.Fatalf("result=%#v error=%v", result, err)
 				}
@@ -123,7 +123,7 @@ func TestCancellationAtEveryExecutionBoundary(t *testing.T) {
 			if stage == "before run" {
 				cancel()
 			}
-			result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(ctx, request)
+			result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(ctx, request)
 			if !errors.Is(err, context.Canceled) || result.StopReason != protocol.StopError || models > 1 || executions > 1 {
 				t.Fatalf("result=%#v error=%v models=%d executions=%d", result, err, models, executions)
 			}
@@ -171,7 +171,7 @@ func TestToolStartAndEndErrorsAreJoinedWithoutExecuting(t *testing.T) {
 	provider := scriptedProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		return toolResponse(call("first")), nil
 	}}
-	result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(context.Background(), request)
+	result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
 	if !errors.Is(err, startErr) || !errors.Is(err, endErr) || result.StopReason != protocol.StopError || len(result.ToolCalls) != 1 {
 		t.Fatalf("result=%#v error=%v", result, err)
 	}
@@ -244,7 +244,7 @@ func TestSnapshotsIsolateCallerProviderExecutorsAndHooks(t *testing.T) {
 			return nil
 		},
 	}
-	result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(context.Background(), request)
+	result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
 	if err != nil || result.LastResponse.Message.Text() != "final" || providerCalls != 2 {
 		t.Fatalf("result=%#v error=%v", result, err)
 	}

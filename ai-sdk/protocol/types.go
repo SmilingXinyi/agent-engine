@@ -67,7 +67,7 @@ type Message struct {
 	// ProviderOptions are native input fields on the corresponding message
 	// object, not on its content blocks or the top-level request. Providers must
 	// reject common-field collisions and mappings without an unambiguous target.
-	// Native response fields remain in ModelResponse.Raw or raw stream events;
+	// Native response fields remain in ModelResponse.Raw or StreamChunk;
 	// they are never automatically turned into these input options.
 	ProviderOptions map[string]any `json:"provider_options,omitempty"`
 }
@@ -151,9 +151,9 @@ type ModelResponse struct {
 	FinishReason FinishReason      `json:"finish_reason"`
 	Usage        Usage             `json:"usage"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
-	// Complete means the provider read and delivered the terminal result. A
-	// length limit still completes a call. Client lifecycle hook errors do not
-	// change this state; callers must also check the returned error.
+	// Complete means the provider read the complete non-streaming result. A
+	// length limit still completes a call. Lifecycle hook errors do not change
+	// this state; callers must also check the returned error.
 	Complete bool     `json:"complete"`
 	CallInfo CallInfo `json:"call_info"`
 	// Raw retains the original non-streaming response JSON, when available.
@@ -248,8 +248,11 @@ type ResponseInfo struct {
 	Request   ModelRequest
 	RequestID string
 	Response  ModelResponse
-	Duration  time.Duration
-	Error     error
+	// Stream is non-nil for a streaming call; Response is then unused. The
+	// summary contains no accumulated model output.
+	Stream   *StreamInfo
+	Duration time.Duration
+	Error    error
 }
 
 // Hooks observe independent snapshots. A request hook error prevents the call;
@@ -262,45 +265,36 @@ type Hooks struct {
 type RequestHook func(context.Context, RequestInfo) error
 type ResponseHook func(context.Context, ResponseInfo) error
 
-// StreamEventType identifies the kind of incremental data in a StreamEvent.
-type StreamEventType string
-
-const (
-	EventTextDelta      StreamEventType = "text_delta"
-	EventReasoningDelta StreamEventType = "reasoning_delta"
-	EventToolCallDelta  StreamEventType = "tool_call_delta"
-	EventUsage          StreamEventType = "usage"
-	EventFinish         StreamEventType = "finish"
-)
-
-// ToolCallDelta is an incremental fragment of a streamed tool call. Index is
-// stable for one call. ID is supplied when known; Name and ArgumentsDelta are
-// append-only fragments, never repeated snapshots.
-type ToolCallDelta struct {
-	Index          int    `json:"index"`
-	ID             string `json:"id,omitempty"`
-	Name           string `json:"name,omitempty"`
-	ArgumentsDelta string `json:"arguments_delta,omitempty"`
+// Stream is a synchronous pull reader. Each successful Next delivers one
+// upstream frame, including comments, empty frames and terminal frames. No
+// model output is accumulated. Always Close the stream, including on early exit.
+// Next and Chunk are serial operations; Close may interrupt a blocked Next.
+type Stream interface {
+	Next() bool
+	Chunk() StreamChunk
+	Err() error
+	Close() error
+	Info() StreamInfo
 }
 
-// StreamEvent is one incremental unit emitted while a model call streams.
-// A successful stream emits exactly one EventFinish after all data and usage.
-// A failed stream emits no successful finish and returns its partial response.
-type StreamEvent struct {
-	Type          StreamEventType `json:"type"`
-	Delta         string          `json:"delta,omitempty"`
-	ToolCallDelta *ToolCallDelta  `json:"tool_call_delta,omitempty"`
-	Usage         *Usage          `json:"usage,omitempty"`
-	FinishReason  FinishReason    `json:"finish_reason,omitempty"`
+// StreamChunk preserves one SSE frame. Frame retains its exact bytes and line
+// endings. Event and ID describe this frame only (no inherited last-event ID).
+// Data joins data lines with LF and need not be JSON. Buffers remain valid after
+// subsequent Next calls; callers may retain or modify them.
+type StreamChunk struct {
+	Frame []byte
+	Event string
+	ID    string
+	Data  []byte
 }
 
-// EventSink receives StreamEvents as a model call streams.
-type EventSink interface {
-	OnEvent(ctx context.Context, event StreamEvent) error
+// StreamInfo is a snapshot of transport and terminal state, never accumulated
+// content. Complete reports normal upstream termination, not answer quality.
+// Hook or body-close errors do not undo observed normal termination; check Err.
+type StreamInfo struct {
+	CallInfo CallInfo
+	Complete bool
 }
-
-// EventSinkFunc adapts a function to the EventSink interface.
-type EventSinkFunc func(context.Context, StreamEvent) error
 
 // Provider maps the common ModelRequest and ModelResponse format to one AI
 // service. It performs one complete call via Generate.
@@ -309,9 +303,9 @@ type Provider interface {
 	Generate(ctx context.Context, request ModelRequest) (ModelResponse, error)
 }
 
-// StreamingProvider is a Provider that delivers incremental output through
-// Stream. Leave it unimplemented when the upstream API has no stream.
+// StreamingProvider opens and validates a streaming response without consuming
+// its body. The returned reader owns the response until termination or Close.
 type StreamingProvider interface {
 	Provider
-	Stream(ctx context.Context, request ModelRequest, sink EventSink) (ModelResponse, error)
+	Stream(ctx context.Context, request ModelRequest) (Stream, error)
 }

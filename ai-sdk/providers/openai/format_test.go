@@ -187,6 +187,16 @@ func TestMessageProviderOptionsReachBothCallModesAndAPIs(t *testing.T) {
 					if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 						t.Fatal(err)
 					}
+					if payload["stream"] != streaming {
+						t.Fatalf("stream flag=%v want %v", payload["stream"], streaming)
+					}
+					accept := "application/json"
+					if streaming {
+						accept = "text/event-stream"
+					}
+					if request.Header.Get("Accept") != accept {
+						t.Fatalf("Accept=%q want %q", request.Header.Get("Accept"), accept)
+					}
 					key := "messages"
 					if api == APITypeResponsesAPI {
 						key = "input"
@@ -214,20 +224,21 @@ func TestMessageProviderOptionsReachBothCallModesAndAPIs(t *testing.T) {
 				request := testRequest()
 				request.Messages[0].ProviderOptions = map[string]any{"vendor_extension": map[string]any{"enabled": true}}
 				request.Messages = append(request.Messages, protocol.TextMessage(protocol.RoleUser, "another"))
-				var response protocol.ModelResponse
-				var err error
 				if streaming {
-					response, err = provider.Stream(context.Background(), request, nil)
-				} else {
-					response, err = provider.Generate(context.Background(), request)
+					chunks, stream := consumeStream(t, provider, context.Background(), request)
+					if stream.Err() != nil || !stream.Info().Complete || len(chunks) == 0 {
+						t.Fatalf("chunks=%#v info=%#v err=%v", chunks, stream.Info(), stream.Err())
+					}
+					return
 				}
+				response, err := provider.Generate(context.Background(), request)
 				if err != nil || !response.Complete || response.Message.Text() != "ok" {
 					t.Fatalf("response=%#v err=%v", response, err)
 				}
 				if len(response.Message.ProviderOptions) > 0 {
 					t.Fatal("native output became input options")
 				}
-				if !streaming && !bytes.Contains(response.Raw, []byte(`"vendor_output":"opaque"`)) {
+				if !bytes.Contains(response.Raw, []byte(`"vendor_output":"opaque"`)) {
 					t.Fatal("native output was not preserved separately")
 				}
 			})

@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.3.0 — Unreleased — pull streams preserving original SSE frames
+
+Streaming changes are limited to ai-sdk. Workspace lifecycle callers now import
+hooks and request metadata from protocol; no release tag is created here.
+
+### Breaking streaming contract
+
+- Replace `Client.Stream` and `StreamingProvider.Stream` with
+  `Stream(ctx, ModelRequest) (protocol.Stream, error)`. Consume with
+  `Next`, `Chunk`, `Err`, `Close`, and `Info`; always close the reader.
+- Add `StreamChunk` with exact `Frame` bytes and parsed SSE `Event`, `ID`, `Data`.
+  One upstream frame produces one chunk, including comments, empty frames,
+  unknown payloads and terminal frames. Buffers remain retainable after Next.
+- Remove `EventSink`, `EventSinkFunc`, `StreamEvent`, `StreamEventType`, event
+  constants, `ToolCallDelta`, `Config.OnRawEvent` and `openai.RawEvent`. No aliases,
+  replacement callback API or StreamNative entry point is added.
+- Remove forced text/reasoning/tool/usage accumulation and semantic splitting.
+  Streaming does not return ModelResponse, reconcile final content, or validate
+  payload schemas. No optional normalizer or collector is added in this release.
+- Add `StreamInfo` with independent CallInfo and Complete snapshots. Response
+  hooks receive `ResponseInfo.Stream` instead of accumulated Response; hooks run
+  once at exhaustion/failure/close and measure the full consumption lifetime.
+  Opening errors also run response hooks; hook errors join terminal errors.
+
+### SSE and lifetime
+
+- Read synchronously without a producer goroutine or channel. Support LF, CRLF,
+  CR, an initial BOM and an unterminated frame at clean EOF. HTTP read boundaries
+  cannot change frame boundaries. Preserve raw bytes without re-encoding.
+- Deliver protocol terminal and known failure frames before stopping. Preserve
+  Chat Completions RequireDone/finish-plus-clean-EOF behavior and Responses'
+  terminal-event requirement. Do not generate a synthetic finish frame.
+- Close bodies on normal termination, read failure and explicit close. Close is
+  idempotent and may interrupt a blocked Next; early close reports cancellation.
+  Close/hook errors do not undo already observed normal termination.
+- Retain request encodings, Generate and DoNative, structured transport errors,
+  timeout/retry/limit defaults, and the no-replay rule after accepting a success
+  response. No other providers, SSE reconnect, or application migration is added.
+- Add opt-in `integration` tests using real loopback HTTP servers for both APIs,
+  frame preservation, cancellation propagation and broken connections without replay.
+
 ## v0.2.1 — 2026-10-15 — message extension preservation
 
 - Add `Message.ProviderOptions` for explicit native message-level input fields in

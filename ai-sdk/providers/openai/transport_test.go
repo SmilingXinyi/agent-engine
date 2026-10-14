@@ -178,9 +178,9 @@ func TestDefaultTransportHasNoTotalTimeout(t *testing.T) {
 	provider.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &delayedBody{ctx: request.Context(), delay: 25 * time.Millisecond, reader: strings.NewReader("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n")}}, nil
 	})
-	response, err := provider.Stream(context.Background(), testRequest(), nil)
-	if err != nil || !response.Complete || response.Message.Text() != "ok" {
-		t.Fatalf("response=%#v err=%v", response, err)
+	chunks, stream := consumeStream(t, provider, context.Background(), testRequest())
+	if stream.Err() != nil || !stream.Info().Complete || len(chunks) != 1 {
+		t.Fatalf("chunks=%#v info=%#v err=%v", chunks, stream.Info(), stream.Err())
 	}
 }
 
@@ -219,7 +219,8 @@ func TestInjectedClientTimeoutAndCallerDeadlineArePreserved(t *testing.T) {
 				ctx, cancel = context.WithTimeout(ctx, 5*time.Millisecond)
 			}
 			defer cancel()
-			_, err := provider.Stream(ctx, testRequest(), nil)
+			_, stream := consumeStream(t, provider, ctx, testRequest())
+			err := stream.Err()
 			requireFailure(t, err, protocol.ErrorTimeout)
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("deadline cause lost: %v", err)

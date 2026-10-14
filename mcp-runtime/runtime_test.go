@@ -123,7 +123,7 @@ func TestDisabledToolsAreNotAdvertisedOrExecuted(t *testing.T) {
 		}
 		return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "finished")}, nil
 	}}
-	assistant := agent.New(ai.NewClient(provider, ai.Hooks{}))
+	assistant := agent.New(ai.NewClient(provider, aiprot.Hooks{}))
 	response, err := assistant.Execute(ctx, agentprot.Request{Model: "test", UserPrompt: "hello", Tools: runtime.Tools})
 	if err != nil || response.LastResponse.Message.Text() != "finished" || reads.Load() != 1 || writes.Load() != 0 || modelCalls != 2 {
 		t.Fatalf("response=%#v error=%v reads=%d writes=%d modelCalls=%d", response, err, reads.Load(), writes.Load(), modelCalls)
@@ -239,11 +239,11 @@ func TestHTTPToolsCompleteAgentExecution(t *testing.T) {
 		fmt.Fprint(writer, `{"choices":[{"message":{"role":"assistant","content":"hello Ada"},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11}}`)
 	}))
 	defer modelServer.Close()
-	provider, err := openai.New(openai.Config{BaseURL: modelServer.URL, HTTPClient: modelServer.Client(), MaxRetries: -1})
+	provider, err := openai.New(openai.Config{BaseURL: modelServer.URL, HTTPClient: modelServer.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assistant := agent.New(ai.NewClient(provider, ai.Hooks{}))
+	assistant := agent.New(ai.NewClient(provider, aiprot.Hooks{}))
 	response, err := assistant.Execute(ctx, agentprot.Request{
 		Model: "test-model", SystemPrompt: "be helpful", UserPrompt: "greet Ada", Tools: runtime.Tools,
 	})

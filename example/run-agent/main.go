@@ -17,6 +17,7 @@ import (
 	"github.com/SmilingXinyi/agent-engine/agent"
 	agentprot "github.com/SmilingXinyi/agent-engine/agent/protocol"
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
+	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-sdk/providers/openai"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 	mcpruntime "github.com/SmilingXinyi/agent-engine/mcp-runtime"
@@ -69,13 +70,13 @@ func run(promptPath, configPath, envPath string, maxSteps int, timeout time.Dura
 		return err
 	}
 	step := 0
-	client := ai.NewClient(provider, ai.Hooks{
-		OnRequest: []ai.RequestHook{func(_ context.Context, info ai.RequestInfo) error {
+	client := ai.NewClient(provider, aiprot.Hooks{
+		OnRequest: []aiprot.RequestHook{func(_ context.Context, info aiprot.RequestInfo) error {
 			step++
 			fmt.Printf("[model %d] request=%s messages=%d tools=%d\n", step, info.RequestID, len(info.Request.Messages), len(info.Request.Tools))
 			return nil
 		}},
-		OnResponse: []ai.ResponseHook{func(_ context.Context, info ai.ResponseInfo) error {
+		OnResponse: []aiprot.ResponseHook{func(_ context.Context, info aiprot.ResponseInfo) error {
 			fmt.Printf("[model %d result] duration=%s finish=%s toolCalls=%d\n", step, info.Duration.Round(time.Millisecond), info.Response.FinishReason, len(info.Response.Message.ToolCalls()))
 			if text := info.Response.Message.Text(); text != "" {
 				fmt.Println(text)

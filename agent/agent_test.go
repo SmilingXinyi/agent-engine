@@ -38,7 +38,7 @@ func TestExecuteOrganizesContextAndKeepsRunsIndependent(t *testing.T) {
 		request.Messages[1].Parts[0].Text = "mutated"
 		return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "done"), Usage: aiprot.Usage{TotalTokens: 3}}, nil
 	}}
-	assistant := agent.New(ai.NewClient(provider, ai.Hooks{}))
+	assistant := agent.New(ai.NewClient(provider, aiprot.Hooks{}))
 	var previousID string
 	for range 2 {
 		result, err := assistant.Execute(ctx, protocol.Request{Model: "model", SystemPrompt: " system ", History: history, UserPrompt: "next"})
@@ -62,7 +62,7 @@ func TestExecuteAcceptsHistoryWithoutUserPrompt(t *testing.T) {
 			t.Fatalf("messages=%#v", request.Messages)
 		}
 		return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "done")}, nil
-	}}, ai.Hooks{}))
+	}}, aiprot.Hooks{}))
 	if _, err := assistant.Execute(context.Background(), protocol.Request{Model: "model", History: history}); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestExecuteReturnsPartialLoopResult(t *testing.T) {
 	failure := errors.New("provider failure")
 	assistant := agent.New(ai.NewClient(testProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "partial")}, failure
-	}}, ai.Hooks{}))
+	}}, aiprot.Hooks{}))
 	result, err := assistant.Execute(context.Background(), protocol.Request{Model: "model", UserPrompt: "hello"})
 	if !errors.Is(err, failure) || result.StopReason != loopprot.StopError || result.LastResponse.Message.Text() != "partial" || len(result.Steps) != 1 {
 		t.Fatalf("result=%#v error=%v", result, err)
@@ -83,7 +83,7 @@ func TestExecuteRejectsInvalidInput(t *testing.T) {
 	assistant := agent.New(ai.NewClient(testProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		t.Fatal("unexpected call")
 		return aiprot.ModelResponse{}, nil
-	}}, ai.Hooks{}))
+	}}, aiprot.Hooks{}))
 	for _, request := range []protocol.Request{{Model: " ", UserPrompt: "hello"}, {Model: "model"}, {Model: "model", History: []aiprot.Message{{Role: aiprot.RoleUser}}}, {Model: "model", UserPrompt: "hello", Options: loopprot.RunOptions{MaxSteps: -1}}} {
 		result, err := assistant.Execute(context.Background(), request)
 		if err == nil || result.StopReason != loopprot.StopError {

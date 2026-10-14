@@ -69,24 +69,11 @@ type Config struct {
 	// RequireDone requires [DONE] for Chat Completions. Normally a finish_reason
 	// followed by clean EOF also completes the stream. It does not affect Responses.
 	RequireDone bool
-	// OnRawEvent receives every SSE frame before normalization, including comments,
-	// unknown events and [DONE]. Its buffers belong to the callback and are retained
-	// safely. Returning an error aborts the call without automatic replay.
-	OnRawEvent func(context.Context, RawEvent) error
-}
-
-// RawEvent is a complete SSE frame. Frame preserves body bytes (including line
-// endings); Data follows SSE data-line joining. HTTP read boundaries are irrelevant.
-type RawEvent struct {
-	Name  string
-	ID    string
-	Data  []byte
-	Frame []byte
 }
 
 // NativeResponse exposes the unnormalized final HTTP response, including non-2xx
-// responses. The caller owns Body and must close it. Normalized size limits and
-// OnRawEvent do not apply; native consumers control their own reading and limits.
+// responses. The caller owns Body and must close it. SDK-managed body limits
+// and stream parsing do not apply; callers control their own reading and limits.
 type NativeResponse struct {
 	StatusCode int
 	Headers    http.Header
@@ -107,7 +94,6 @@ type Provider struct {
 	maxStreamBytes   int64
 	maxEventBytes    int64
 	requireDone      bool
-	onRawEvent       func(context.Context, RawEvent) error
 }
 
 func New(config Config) (*Provider, error) {
@@ -155,7 +141,7 @@ func New(config Config) (*Provider, error) {
 		headers: utils.CloneMap(config.Headers), httpClient: client, retry: retry, onAttempt: config.OnAttempt,
 		maxResponseBytes: positiveOrDefault(config.MaxResponseBytes, defaultMaxResponseBytes),
 		maxStreamBytes:   config.MaxStreamBytes, maxEventBytes: positiveOrDefault(config.MaxEventBytes, defaultMaxEventBytes),
-		requireDone: config.RequireDone, onRawEvent: config.OnRawEvent,
+		requireDone: config.RequireDone,
 	}, nil
 }
 

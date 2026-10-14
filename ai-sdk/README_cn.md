@@ -1,22 +1,33 @@
 # AI SDK
 
-`ai-sdk` 是独立 Go 模块，负责一次模型调用。统一接口适用于聊天、文本生成、
-工具调用请求、流式输出和结构化输出；OpenAI provider 的原生接口适用于模型代理、
-厂商扩展和需要保留完整协议的服务。它不执行工具，不管理历史，也不要求接入 agent 或 MCP。
+`ai-sdk` 是独立 Go 模块，负责一次模型调用。`ModelRequest` 统一表达消息、工具和模型参数；
+`Generate` 返回统一结果，`Stream` 按原始 SSE 帧交付上游输出。它不执行工具，不管理历史，
+也不要求接入 agent 或 MCP。需要完整原生请求 JSON 时可使用 OpenAI provider 的 `DoNative`。
 
 ## 安装和模块边界
 
 要求 Go 1.25+，只有标准库依赖。
 
-使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.2.1` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.2.1`，不使用仓库根目录的裸版本标签。
-本地开发可以在调用项目的 `go.work` 中引用此模块，或通过
-`go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
+本分支描述准备中的 **v0.3.0（尚未发布）**，流式接口与已发布的 v0.2.1 不兼容。
+请通过调用项目的 `go.work` 或 `go.mod` 的 `replace` 引用本地 `ai-sdk` 测试新接口。
+Go 子模块发布标签使用 `ai-sdk/vX.Y.Z`，本轮不创建发布标签。
+已发布的 v0.2.1 仍使用旧 sink 接口，不能直接运行下文的新流式示例。
 
 - `protocol/types.go`：公共类型、接口和常量，包括错误、hooks 和能力说明。
 - `protocol/methods.go`：消息构造、结果提取、快照复制和错误链行为。
 - 模块根目录：一次调用的生命周期。
 - `providers/openai`：HTTP、SSE 和两种 OpenAI API 格式的适配；原生扩展也在这里。
+
+在 `ai-sdk` 目录独立验证：
+
+```sh
+GOWORK=off go test -race -count=1 ./...
+GOWORK=off go vet ./...
+GOWORK=off go test -race -tags=integration -count=1 ./...
+```
+
+`integration` 测试启动真实本地 HTTP 服务，需要允许绑定回环端口；覆盖两种 API 的
+原始帧交付、分块传输、取消传到服务端及断连不重放，不调用外部模型厂商。
 
 ## 最小调用
 
@@ -110,8 +121,8 @@ request := protocol.ModelRequest{
 要求填写字段，不自动改写为 `reasoning`。Python 等 SDK 的 `extra_body` 是封装参数，
 不能直接作为 HTTP 字段使用；本模块会拒绝它，请把其中的字段直接放到 `ProviderOptions`。
 
-统一返回值只表达一个模型结果。多个候选、厂商内置工具、加密推理项目
-等需要完整原生协议的场景使用 `DoNative`。消息顶层扩展通过下文的
+`Generate` 的统一返回值只表达一个模型结果，`ModelRequest` 调用仍限制单个候选。
+多个候选、厂商内置工具、加密推理项目等无法通过公共请求表达的场景使用 `DoNative`。消息顶层扩展通过下文的
 `Message.ProviderOptions` 传递。未知原生内容块也可放在
 `ContentPart{Type: protocol.ContentProvider, Data: ...}` 中，其 JSON 对象按原样结构编码，
 不会变成可跨厂商复用的内容。
@@ -145,45 +156,81 @@ assistant 同时包含文本和工具调用时，Responses 扩展只加到消息
 - 一条工具消息含多个工具结果时，扩展没有唯一对应对象，返回 `ErrorUnsupported`；
   可拆成每条一个工具结果的消息后分别配置。
 - 输入扩展按 JSON 形状深拷贝，生命周期回调修改它们不会改变调用或其他观察者。
-- 响应中的厂商原生字段仍保存在 `ModelResponse.Raw` 和 `OnRawEvent` 中，不会自动填入
+- 响应中的厂商原生字段仍保存在 `ModelResponse.Raw` 和 `StreamChunk` 中，不会自动填入
   `Message.ProviderOptions` 或在下一轮调用中回放。`Message.Metadata` 仍是本地信息。
 
-## 流式调用和完成状态
+## 按原始 SSE 帧读取
+
+从 v0.2.1 迁移：删除 `EventSink` / `EventSinkFunc`、`StreamEvent` / `StreamEventType`、
+事件常量、`ToolCallDelta`、`Config.OnRawEvent` 和 `openai.RawEvent`。不保留兼容别名，
+也不新增 `StreamNative`。旧三参数 Stream 调用改为下面的迭代形式；流式 response hook
+从 `ResponseInfo.Response` 改为读取 `ResponseInfo.Stream`。
+
+`Client.Stream(ctx, request)` 和 `provider.Stream(ctx, request)` 返回 `protocol.Stream`。
+SDK 在打开时完成请求编码、鉴权、重试和 HTTP 状态检查，成功响应体直到 `Next()` 才开始读取。
+下面的片段用于返回 `error` 的函数，`writer` 为一个 `io.Writer`：
 
 ```go
-response, err := client.Stream(ctx, request, protocol.EventSinkFunc(
-    func(ctx context.Context, event protocol.StreamEvent) error {
-        switch event.Type {
-        case protocol.EventTextDelta:
-            fmt.Print(event.Delta)
-        case protocol.EventFinish:
-            fmt.Printf("\n结束原因：%s\n", event.FinishReason)
-        }
-        return nil
-    },
-))
+stream, err := client.Stream(ctx, request)
+if err != nil { return err }
+defer stream.Close()
+
+for stream.Next() {
+    chunk := stream.Chunk()
+    if _, err := writer.Write(chunk.Frame); err != nil {
+        return errors.Join(err, stream.Close())
+    }
+}
+return stream.Err()
 ```
 
-- 所有回调同步执行，其错误立即终止调用；流开始后不自动重试。
-- 成功的 provider 流在所有内容、工具参数和 usage 后恰好发出一次 `EventFinish`。
-- `Stream` 返回部分结果和错误时，`Complete=false`；部分结果可用于展示和诊断。
-- `Complete=true` 表示 provider 完成了结果读取和交付。`FinishLength` 也是已结束的
-  模型调用，但不表示业务答案已经完整。不要用文本非空或 `FinishStop` 单独推断成功。
-- Client 的 response hook 可以在上游调用成功后返回错误。这时 `Complete` 保持上游
-  完成状态，调用方仍需处理返回的错误。
-- 工具调用的 `Index` 在本次流内稳定。`Name` 和 `ArgumentsDelta` 是追加片段，
-  `ID` 在获知时提供；按索引累积后使用最终 `Message.ToolCalls()`。
-- Chat Completions 支持 `[DONE]`，也接受明确 `finish_reason` 后的正常 EOF；中途
-  EOF、读取错误和解析失败仍然报错。`RequireDone=true` 可以强制要求结束标记。
-- Responses 必须收到 `response.completed` 或 `response.incomplete` 等终止事件，
-  单独的 `[DONE]` 不代表 Responses 已经完成。上游 failed 状态返回错误。
+该片段还需导入 `errors`。主接口不使用 sink、channel 或后台读取 goroutine，不累积文本、
+推理、工具参数和 usage，不返回聚合后的 `ModelResponse`。本轮不提供内容归一化或聚合器。
 
-两种 SSE 解析器共享完整事件读取，支持 LF、CRLF、多行 `data:` 和 EOF 时最后一个未封口的
-事件。不同 HTTP 读取分块不影响事件语义。空流、缺少终止依据的流不会被视为成功。
+| 接口 | 含义 |
+|---|---|
+| `Next()` | 同步读取下一帧；有帧返回 true，结束或出错返回 false |
+| `Chunk()` | 当前帧；仅在最近一次 `Next()` 返回 true 后读取 |
+| `Err()` | 打开成功后的读取、协议结束、关闭及 response hook 错误 |
+| `Close()` | 幂等释放资源；提前关闭通过 `Err()` 报告取消，返回值包含关闭和 hook 错误 |
+| `Info()` | 独立的 `CallInfo` 与 `Complete` 快照，不包含模型内容 |
 
-## 原生 HTTP 和原始 SSE
+`StreamChunk` 的字段：
 
-`DoNative` 接受完整 JSON 对象，其请求体字节不会重新编码或注入公共字段：
+- `Frame`：完整原始 SSE 字节，包含换行和帧分隔符，适用于保真保存或转发。
+- `Event`、`ID`：本帧的 `event`、`id` 字段；不会继承上一帧的 ID。
+- `Data`：按 SSE 规则用 LF 合并多行 `data:`，移除冒号后最多一个空格，不保证是 JSON。
+
+一次 `Next()` 对应一个帧，不因同一帧包含多种模型内容而拆分。注释、空帧、未知字段、
+未知事件、非 JSON 数据和协议终止帧都会保留。只读取响应开头到协议终止的帧；不会越过终止帧
+继续读取或制造额外 finish chunk。支持 LF、CRLF、CR、开头的 UTF-8 BOM 和正常 EOF 时
+最后一个未封口的帧；BOM 仅在字段解析时忽略，`Frame` 保留它。
+
+不同 HTTP 读取分块不会改变 SSE 帧边界。`Frame` 不代表 TCP 分包或 HTTP chunked 分块，
+也不包含 HTTP headers。`Frame` 和 `Data` 可在后续 `Next()` 后继续持有或修改，SDK 不覆写它们。
+
+## 完成、错误和关闭
+
+- Chat Completions 的 `[DONE]` 原样交付一次后结束；默认也接受明确 `finish_reason` 后的
+  正常 EOF。不能在 finish_reason 到来时提前停读，因为后面可能还有 usage。
+  `RequireDone=true` 可以要求必须有 `[DONE]`。
+- Responses 的 `response.completed` / `response.incomplete` 终止帧原样交付后结束；
+  单独 `[DONE]` 仍交付，但通过 `Err()` 报告 `ErrorStreamIncomplete`。
+- 已识别的 `error` / `response.failed` 等失败帧原样交付，再通过 `Err()` 报告 `ErrorUpstream`。
+  未知和非 JSON 数据不做模型内容校验；SDK 只探测已知终止与失败标记。
+- 缺少终止依据、读取错误、体积超限、超时和取消都不会标记为正常完成。
+  非 EOF 读取失败时，未组成帧的残缺片段不会被伪装成完整帧交付。
+- `Info().Complete` 仅表示上游正常结束，不表示业务答案完整。上游已正常结束后，
+  response hook 或响应体关闭错误不会改写它；仍需检查 `Err()`。
+- 无论正常结束、失败或提前退出，都必须 `Close()`。正常结束和失败会自动释放响应体；
+  `Close()` 同时确保 Client 的生命周期 hooks 已执行。提前 break 时检查 `Close()` 的返回值和 `Err()`。
+- `Next()` 和 `Chunk()` 串行使用，`Close()` 可以从另一 goroutine 中断阻塞读取；context
+  取消也可以中断读取。SDK 不自动重连或重放已经打开的成功响应。
+
+## 原生 HTTP
+
+`DoNative` 仅用于完整原生请求 JSON：请求体字节不会重新编码或注入公共字段。
+使用统一请求并保留原始 SSE 时，直接调用上面的 `Stream` 即可。
 
 ```go
 native, err := provider.DoNative(ctx, json.RawMessage(`{
@@ -193,31 +240,13 @@ native, err := provider.DoNative(ctx, json.RawMessage(`{
 }`))
 if err != nil { return err }
 defer native.Body.Close()
-// native.StatusCode、native.Headers、native.Attempts 可用于构建代理响应。
 _, err = io.Copy(writer, native.Body)
 return err
 ```
 
-该片段用于返回 `error` 的函数，需导入 `encoding/json` 和 `io`。原生接口返回最终 HTTP
-响应，包括非 2xx；传输失败才通过返回值提供 SDK 错误。调用方拥有响应体，必须关闭它。
-它使用相同的显式重试策略，但不执行归一化、结果累积、默认体积限制或 `OnRawEvent`；
-读取策略、体积限制和成功判定由原生调用方负责。
-
-需要统一结果，同时观察上游未知字段或原始 SSE 时，在 config 设置：
-
-```go
-OnRawEvent: func(ctx context.Context, event openai.RawEvent) error {
-    // event.Frame 包含原始 SSE 字节和换行，包括注释及 [DONE]。
-    // event.Data 是按 SSE 规则合并的 data 内容，不保证是 JSON。
-    // event.Name、event.ID 是该帧内的 event 和 id 字段。
-    return record(event.Frame)
-},
-```
-
-原始观察发生在该帧归一化之前，回调收到独立缓冲区，可以保留或修改它。
-`Frame` 保留上游响应体里的 SSE 字节，不代表 TCP/HTTP 传输分块，也不包含 HTTP headers。
-与统一事件同时消费时，调用方应明确哪个用于转发，哪个用于监控，避免重复发送。
-非流式 `ModelResponse.Raw` 保留完整响应 JSON，包括未知字段。
+该片段需导入 `encoding/json` 和 `io`。原生接口返回最终 HTTP 响应，包括非 2xx；
+调用方拥有响应体，必须关闭它，并自行决定读取限制与成功判定。它不进行 SSE 解析。
+非流式 `ModelResponse.Raw` 继续保留完整响应 JSON，包括未知字段。
 
 ## 错误和观测
 
@@ -235,10 +264,17 @@ if errors.Is(err, context.DeadlineExceeded) {
 `Cause`。`Retryable` 表示可能是暂时性失败，不授权重新播放已经对外输出的流。
 HTTP 失败保留最后一次响应的状态、headers 和错误 body，body 最多读取 `MaxResponseBytes`。
 
-`ModelResponse.CallInfo` 在成功或部分失败时提供尝试次数和最终 HTTP 状态、headers。
-`protocol.Hooks.OnResponse` 可以读取这些信息。Hook 参数的消息、JSON 扩展、headers
-等均为独立快照；`map[string]any` / `[]any` 等 JSON 形状会递归复制，应用自定义指针仍然共享。
-Hook 错误可以阻止或终止调用，panic 原样传播。
+`Generate` 通过 `ModelResponse.CallInfo` 提供尝试次数和最终 HTTP 状态、headers；
+流式调用使用 `stream.Info().CallInfo`。打开失败时读取 `protocol.Error.CallInfo`。
+
+`OnRequest` 在请求前执行。`OnResponse` 对 Generate 在返回时执行；对 Stream 在耗尽、
+失败或关闭时执行且只执行一次，Duration 覆盖整个消费周期。打开失败也会触发 response hook，
+request hook 拒绝或 provider 不支持流式时不会触发。
+流式 hook 使用 `ResponseInfo.Stream` 摘要，`ResponseInfo.Response` 保持零值；
+Generate 继续使用 `ResponseInfo.Response`，其 Stream 为 nil。
+
+Hook 参数的消息、JSON 扩展、headers 和 Stream 摘要均为独立快照；JSON 形状递归复制，
+应用自定义指针仍然共享。Hook 错误合并到调用错误中，panic 原样传播。
 
 逐次 HTTP 观测通过 `Config.OnAttempt`，可获得尝试编号、状态码、错误分类、是否重试和
 等待时长。HTTP 错误的完整 body 在最终错误中提供，attempt callback 不读取 body。
@@ -263,7 +299,7 @@ Hook 错误可以阻止或终止调用，panic 原样传播。
 需要重试时显式配置 `Retry: openai.RetryPolicy{MaxRetries: 2}`。仅对暂时性网络错误和
 HTTP 408、429、5xx 进行重试；永久错误及已取消的 context 不重试。HTTP `Retry-After`
 支持秒数和日期，它是等待下限，可以超过 `MaxBackoff`，context 可提前终止等待。
-收到成功 HTTP 响应后，body 读取、SSE 解析和回调失败都不会重放请求。
+收到成功 HTTP 响应后，body 读取、SSE 读取和生命周期 hook 失败都不会重放请求。
 尝试次数统计应用层发送，不包含注入的 HTTP transport 内部可能发生的透明重试。
 
 ## 能力范围

@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -74,6 +73,12 @@ func (info CallInfo) Clone() CallInfo {
 	return info
 }
 
+// Clone returns an independent transport summary.
+func (info StreamInfo) Clone() StreamInfo {
+	info.CallInfo = info.CallInfo.Clone()
+	return info
+}
+
 // TextMessage builds a Message with a single text ContentPart.
 func TextMessage(role Role, text string) Message {
 	return Message{Role: role, Parts: []ContentPart{{Type: ContentText, Text: text}}}
@@ -137,14 +142,6 @@ func (result ToolResult) Text() string {
 		}
 	}
 	return text.String()
-}
-
-// OnEvent invokes the underlying function, treating a nil receiver as a no-op.
-func (sink EventSinkFunc) OnEvent(ctx context.Context, event StreamEvent) error {
-	if sink == nil {
-		return nil
-	}
-	return sink(ctx, event)
 }
 
 func cloneToolCall(call ToolCall) ToolCall {

@@ -28,68 +28,42 @@ func NewClient(provider protocol.Provider, hooks protocol.Hooks) *Client {
 
 // Generate performs one non-streaming model call.
 func (client *Client) Generate(ctx context.Context, request protocol.ModelRequest) (protocol.ModelResponse, error) {
-	return client.call(ctx, request, nil, false)
-}
-
-// Stream performs one model call, delivering incremental output to sink.
-// It returns a protocol.Error with ErrorUnsupported when the provider has no stream.
-func (client *Client) Stream(ctx context.Context, request protocol.ModelRequest, sink protocol.EventSink) (protocol.ModelResponse, error) {
-	return client.call(ctx, request, sink, true)
-}
-
-func (client *Client) call(ctx context.Context, request protocol.ModelRequest, sink protocol.EventSink, streaming bool) (response protocol.ModelResponse, err error) {
 	if client == nil || client.provider == nil {
 		return protocol.ModelResponse{}, &protocol.Error{Code: protocol.ErrorInvalidRequest, Message: "provider is required"}
 	}
-
-	var streamingProvider protocol.StreamingProvider
-	if streaming {
-		var ok bool
-		streamingProvider, ok = client.provider.(protocol.StreamingProvider)
-		if !ok {
-			return protocol.ModelResponse{}, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "provider does not support streaming"}
-		}
-	}
-
-	request = request.Clone()
-	providerName := client.provider.Name()
-	requestID := ""
-	if request.Metadata != nil {
-		requestID = request.Metadata[protocol.RequestIDMetadataKey]
-	}
-	requestInfo := protocol.RequestInfo{Provider: providerName, Request: request, RequestID: requestID, Timestamp: time.Now()}
-	for index, hook := range client.hooks.OnRequest {
-		if hook == nil {
-			continue
-		}
-		if hookErr := hook(ctx, cloneRequestInfo(requestInfo)); hookErr != nil {
-			return protocol.ModelResponse{}, fmt.Errorf("request hook %d: %w", index, hookErr)
-		}
+	requestInfo, err := client.prepare(ctx, request)
+	if err != nil {
+		return protocol.ModelResponse{}, err
 	}
 
 	startedAt := time.Now()
-	if streaming {
-		response, err = streamingProvider.Stream(ctx, request, sink)
-	} else {
-		response, err = client.provider.Generate(ctx, request)
-	}
-	finishedAt := time.Now()
-
-	responseInfo := protocol.ResponseInfo{
-		Provider:  providerName,
-		Request:   request,
-		RequestID: requestID,
+	response, err := client.provider.Generate(ctx, requestInfo.Request)
+	hookErr := client.observeResponse(ctx, protocol.ResponseInfo{
+		Provider:  requestInfo.Provider,
+		Request:   requestInfo.Request,
+		RequestID: requestInfo.RequestID,
 		Response:  response,
-		Duration:  finishedAt.Sub(startedAt),
+		Duration:  time.Since(startedAt),
 		Error:     err,
-	}
-	for index, hook := range client.hooks.OnResponse {
-		if hook == nil {
-			continue
-		}
-		if hookErr := hook(ctx, cloneResponseInfo(responseInfo)); hookErr != nil {
-			err = errors.Join(err, fmt.Errorf("response hook %d: %w", index, hookErr))
-		}
+	})
+	if hookErr != nil {
+		err = errors.Join(err, hookErr)
 	}
 	return response, err
+}
+
+func (client *Client) prepare(ctx context.Context, request protocol.ModelRequest) (protocol.RequestInfo, error) {
+	request = request.Clone()
+	info := protocol.RequestInfo{
+		Provider: client.provider.Name(), Request: request,
+		RequestID: request.Metadata[protocol.RequestIDMetadataKey], Timestamp: time.Now(),
+	}
+	for index, hook := range client.hooks.OnRequest {
+		if hook != nil {
+			if err := hook(ctx, cloneRequestInfo(info)); err != nil {
+				return protocol.RequestInfo{}, fmt.Errorf("request hook %d: %w", index, err)
+			}
+		}
+	}
+	return info, nil
 }

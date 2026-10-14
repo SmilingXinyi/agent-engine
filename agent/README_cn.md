@@ -13,6 +13,7 @@ import (
     "github.com/SmilingXinyi/agent-engine/agent"
     "github.com/SmilingXinyi/agent-engine/agent/protocol"
     ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
+    aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
     "github.com/SmilingXinyi/agent-engine/ai-sdk/providers/openai"
 )
 
@@ -25,7 +26,7 @@ func main() {
         panic(err)
     }
 
-    assistant := agent.New(ai.NewClient(provider, ai.Hooks{}))
+    assistant := agent.New(ai.NewClient(provider, aiprot.Hooks{}))
     response, err := assistant.Execute(context.Background(), protocol.Request{
         Model:        os.Getenv("AGENT_MODEL"),
         SystemPrompt: "你是一个简洁的助手。",

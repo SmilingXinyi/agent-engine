@@ -46,7 +46,7 @@ func textResponse(text string) aiprot.ModelResponse {
 
 func TestRunSequentialLifecycleRecordsAndUsage(t *testing.T) {
 	var lifecycle []string
-	var sdkRequests []ai.RequestInfo
+	var sdkRequests []aiprot.RequestInfo
 	first := toolResponse(call("first"), call("second"))
 	first.Usage = aiprot.Usage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5, ReasoningTokens: 1, CacheReadTokens: 1, CacheWriteTokens: 2}
 	last := textResponse("final")
@@ -69,8 +69,8 @@ func TestRunSequentialLifecycleRecordsAndUsage(t *testing.T) {
 		}
 		return last, nil
 	}}
-	client := ai.NewClient(provider, ai.Hooks{
-		OnRequest: []ai.RequestHook{func(_ context.Context, info ai.RequestInfo) error {
+	client := ai.NewClient(provider, aiprot.Hooks{
+		OnRequest: []aiprot.RequestHook{func(_ context.Context, info aiprot.RequestInfo) error {
 			sdkRequests = append(sdkRequests, info)
 			return nil
 		}},
@@ -180,7 +180,7 @@ func TestRunFeedsOrdinaryToolFailuresToModel(t *testing.T) {
 				}
 				return textResponse("recovered"), nil
 			}}
-			result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(context.Background(), request)
+			result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
 			if err != nil || result.StopReason != protocol.StopNatural || modelCalls != 2 || len(result.ToolCalls) != 1 {
 				t.Fatalf("result=%#v error=%v", result, err)
 			}
@@ -211,7 +211,7 @@ func TestMalformedToolBatchHasNoSideEffects(t *testing.T) {
 			return aiprot.ToolResult{}, nil
 		}}}
 		provider := scriptedProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) { return response, nil }}
-		result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(context.Background(), request)
+		result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
 		if err == nil || result.StopReason != protocol.StopError || len(result.ToolCalls) != 0 || len(result.Steps) != 1 {
 			t.Fatalf("result=%#v error=%v", result, err)
 		}
@@ -232,7 +232,7 @@ func TestMaxStepsStopsBeforeLastToolBatch(t *testing.T) {
 			response.Usage.TotalTokens = 3
 			return response, nil
 		}}
-		result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(context.Background(), request)
+		result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
 		if limit == 0 {
 			limit = protocol.DefaultMaxSteps
 		}
@@ -262,7 +262,7 @@ func TestProviderFailureAndEndHookErrorsAreJoined(t *testing.T) {
 		response.Usage.TotalTokens = 4
 		return response, providerErr
 	}}
-	result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(context.Background(), request)
+	result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
 	if !errors.Is(err, providerErr) || !errors.Is(err, stepEndErr) || !errors.Is(err, runEndErr) || result.StopReason != protocol.StopError || result.LastResponse.Message.Text() != "partial" || result.Usage.TotalTokens != 4 || len(result.Messages) != 2 {
 		t.Fatalf("result=%#v error=%v", result, err)
 	}
@@ -293,7 +293,7 @@ func TestInvalidRequestsDoNotEnterLifecycle(t *testing.T) {
 			t.Fatal("invalid request entered lifecycle")
 			return nil
 		}
-		if result, err := loop.New(ai.NewClient(provider, ai.Hooks{})).Run(context.Background(), request); err == nil || result.StopReason != protocol.StopError {
+		if result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request); err == nil || result.StopReason != protocol.StopError {
 			t.Fatalf("result=%#v error=%v", result, err)
 		}
 	}
@@ -305,7 +305,7 @@ func TestInvalidRequestsDoNotEnterLifecycle(t *testing.T) {
 	empty := scriptedProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		return aiprot.ModelResponse{}, nil
 	}}
-	if _, err := loop.New(ai.NewClient(empty, ai.Hooks{})).Run(context.Background(), initialRequest()); err == nil || !strings.Contains(err.Error(), "no content") {
+	if _, err := loop.New(ai.NewClient(empty, aiprot.Hooks{})).Run(context.Background(), initialRequest()); err == nil || !strings.Contains(err.Error(), "no content") {
 		t.Fatalf("error=%v", err)
 	}
 }
