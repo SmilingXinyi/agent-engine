@@ -5,6 +5,7 @@ package protocol
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // Role identifies who produced a Message.
@@ -12,6 +13,7 @@ type Role string
 
 const (
 	RoleSystem    Role = "system"
+	RoleDeveloper Role = "developer"
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
 	RoleTool      Role = "tool"
@@ -28,6 +30,9 @@ const (
 	ContentFile       ContentType = "file"
 	ContentToolCall   ContentType = "tool_call"
 	ContentToolResult ContentType = "tool_result"
+	// ContentProvider carries an opaque native content block in Data. It is
+	// intentionally tied to the selected provider's wire format.
+	ContentProvider ContentType = "provider"
 )
 
 // ContentPart is the provider-neutral unit of message content. Providers may
@@ -126,6 +131,10 @@ type ModelRequest struct {
 	Temperature     *float64          `json:"temperature,omitempty"`
 	MaxOutputTokens *int              `json:"max_output_tokens,omitempty"`
 	ToolChoice      ToolChoice        `json:"tool_choice,omitempty"`
+	Reasoning       *ReasoningOptions `json:"reasoning,omitempty"`
+	OutputFormat    *OutputFormat     `json:"output_format,omitempty"`
+	// ProviderOptions are native top-level request fields. Providers must reject
+	// collisions with common fields; they must not guess or translate aliases.
 	ProviderOptions map[string]any    `json:"provider_options,omitempty"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
 }
@@ -136,7 +145,116 @@ type ModelResponse struct {
 	FinishReason FinishReason      `json:"finish_reason"`
 	Usage        Usage             `json:"usage"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+	// Complete means the provider read and delivered the terminal result. A
+	// length limit still completes a call. Client lifecycle hook errors do not
+	// change this state; callers must also check the returned error.
+	Complete bool     `json:"complete"`
+	CallInfo CallInfo `json:"call_info"`
+	// Raw retains the original non-streaming response JSON, when available.
+	Raw json.RawMessage `json:"raw,omitempty"`
 }
+
+// ReasoningOptions covers the common effort setting. Other reasoning controls
+// belong to ProviderOptions and are not portable between providers.
+type ReasoningOptions struct {
+	Effort string `json:"effort"`
+}
+
+type OutputFormatType string
+
+const (
+	OutputText       OutputFormatType = "text"
+	OutputJSON       OutputFormatType = "json"
+	OutputJSONSchema OutputFormatType = "json_schema"
+)
+
+type OutputFormat struct {
+	Type   OutputFormatType `json:"type"`
+	Name   string           `json:"name,omitempty"`
+	Schema json.RawMessage  `json:"schema,omitempty"`
+	Strict bool             `json:"strict,omitempty"`
+}
+
+// CallInfo describes the final transport attempt. Non-HTTP providers leave
+// StatusCode and Headers empty. Attempts counts actual application attempts,
+// excluding any transparent retries inside an injected transport.
+type CallInfo struct {
+	Attempts   int                 `json:"attempts"`
+	StatusCode int                 `json:"status_code,omitempty"`
+	Headers    map[string][]string `json:"headers,omitempty"`
+}
+
+type ErrorCode string
+
+const (
+	ErrorInvalidRequest   ErrorCode = "invalid_request"
+	ErrorUnsupported      ErrorCode = "unsupported"
+	ErrorAuthentication   ErrorCode = "authentication"
+	ErrorRateLimit        ErrorCode = "rate_limit"
+	ErrorUpstream         ErrorCode = "upstream"
+	ErrorTransport        ErrorCode = "transport"
+	ErrorCanceled         ErrorCode = "canceled"
+	ErrorTimeout          ErrorCode = "timeout"
+	ErrorDecode           ErrorCode = "decode"
+	ErrorStreamIncomplete ErrorCode = "stream_incomplete"
+	ErrorResponseTooLarge ErrorCode = "response_too_large"
+	ErrorSink             ErrorCode = "sink"
+)
+
+// Error preserves classification and the underlying error chain. Retryable
+// identifies a transient failure; it never authorizes replaying emitted output.
+type Error struct {
+	Code      ErrorCode
+	Provider  string
+	Message   string
+	Retryable bool
+	CallInfo  CallInfo
+	Body      []byte
+	Cause     error
+}
+
+// Capabilities describes an adapter's encodings, not what every upstream model
+// accepts. Model-specific restrictions can still be returned by the service.
+type Capabilities struct {
+	Streaming         bool
+	InputContent      []ContentType
+	ToolResultContent []ContentType
+	Tools             bool
+	Reasoning         bool
+	StructuredOutput  bool
+}
+
+type CapabilityProvider interface {
+	Capabilities() Capabilities
+}
+
+const RequestIDMetadataKey = "request_id"
+
+type RequestInfo struct {
+	Provider  string
+	Request   ModelRequest
+	RequestID string
+	Timestamp time.Time
+}
+
+type ResponseInfo struct {
+	Provider  string
+	Request   ModelRequest
+	RequestID string
+	Response  ModelResponse
+	Duration  time.Duration
+	Error     error
+}
+
+// Hooks observe independent snapshots. A request hook error prevents the call;
+// response hook errors are joined with the call error. Panics propagate.
+type Hooks struct {
+	OnRequest  []RequestHook
+	OnResponse []ResponseHook
+}
+
+type RequestHook func(context.Context, RequestInfo) error
+type ResponseHook func(context.Context, ResponseInfo) error
 
 // StreamEventType identifies the kind of incremental data in a StreamEvent.
 type StreamEventType string
@@ -149,7 +267,9 @@ const (
 	EventFinish         StreamEventType = "finish"
 )
 
-// ToolCallDelta is an incremental fragment of a streamed tool call.
+// ToolCallDelta is an incremental fragment of a streamed tool call. Index is
+// stable for one call. ID is supplied when known; Name and ArgumentsDelta are
+// append-only fragments, never repeated snapshots.
 type ToolCallDelta struct {
 	Index          int    `json:"index"`
 	ID             string `json:"id,omitempty"`
@@ -158,6 +278,8 @@ type ToolCallDelta struct {
 }
 
 // StreamEvent is one incremental unit emitted while a model call streams.
+// A successful stream emits exactly one EventFinish after all data and usage.
+// A failed stream emits no successful finish and returns its partial response.
 type StreamEvent struct {
 	Type          StreamEventType `json:"type"`
 	Delta         string          `json:"delta,omitempty"`

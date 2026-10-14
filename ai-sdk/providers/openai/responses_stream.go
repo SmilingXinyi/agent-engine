@@ -1,10 +1,10 @@
 package openai
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -49,94 +49,39 @@ type responsesStreamAccumulator struct {
 	completed    bool
 }
 
-func (provider *Provider) streamResponses(ctx context.Context, request protocol.ModelRequest, sink protocol.EventSink) (protocol.ModelResponse, error) {
-	payload, err := provider.buildRequest(request, true)
-	if err != nil {
-		return protocol.ModelResponse{}, err
-	}
-	response, err := provider.send(ctx, payload)
-	if err != nil {
-		return protocol.ModelResponse{}, err
-	}
-	defer func() { _ = response.Body.Close() }()
-	if err := validateHTTPResponse(response); err != nil {
-		return protocol.ModelResponse{}, err
-	}
-
-	accumulator := responsesStreamAccumulator{
-		toolCalls:    make(map[int]*responsesToolCallBuilder),
-		indexesByID:  make(map[string]int),
-		providerName: provider.name,
-	}
-	scanner := bufio.NewScanner(response.Body)
-	maxLineBytes := provider.maxResponseBytes
-	if maxLineBytes > 10*1024*1024 {
-		maxLineBytes = 10 * 1024 * 1024
-	}
-	scanner.Buffer(make([]byte, 64*1024), int(maxLineBytes))
-	var eventName string
-	var data strings.Builder
-	var totalBytes int64
-	flush := func() error {
-		if data.Len() == 0 {
-			eventName = ""
+func (provider *Provider) streamResponses(ctx context.Context, body io.Reader, sink protocol.EventSink) (protocol.ModelResponse, error) {
+	accumulator := responsesStreamAccumulator{toolCalls: make(map[int]*responsesToolCallBuilder), indexesByID: make(map[string]int), providerName: provider.name}
+	err := provider.readSSE(ctx, body, func(event RawEvent) error {
+		if len(event.Data) == 0 {
 			return nil
 		}
-		payload := strings.TrimSpace(data.String())
-		data.Reset()
-		name := eventName
-		eventName = ""
-		if payload == "[DONE]" {
-			accumulator.completed = true
-			return nil
+		if bytes.Equal(bytes.TrimSpace(event.Data), []byte("[DONE]")) {
+			return errSSEComplete
 		}
-		var event responsesStreamEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			return fmt.Errorf("decode OpenAI Responses stream event: %w", err)
+		var decoded responsesStreamEvent
+		if err := json.Unmarshal(event.Data, &decoded); err != nil {
+			return &protocol.Error{Code: protocol.ErrorDecode, Message: err.Error(), Cause: err}
 		}
+		name := event.Name
 		if name == "" {
-			name = event.Type
+			name = decoded.Type
 		}
-		if err := accumulator.consume(ctx, name, event, sink); err != nil {
+		if err := accumulator.consume(ctx, name, decoded, sink); err != nil {
 			return err
 		}
+		if accumulator.completed {
+			return errSSEComplete
+		}
 		return nil
-	}
-	for scanner.Scan() {
-		totalBytes += int64(len(scanner.Bytes()))
-		if totalBytes > provider.maxResponseBytes {
-			return accumulator.response(), fmt.Errorf("OpenAI Responses stream response exceeds %d bytes", provider.maxResponseBytes)
-		}
-		line := strings.TrimRight(scanner.Text(), "\r")
-		if line == "" {
-			if err := flush(); err != nil {
-				return accumulator.response(), err
-			}
-			continue
-		}
-		if strings.HasPrefix(line, ":") {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "event:"):
-			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		case strings.HasPrefix(line, "data:"):
-			if data.Len() > 0 {
-				data.WriteByte('\n')
-			}
-			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return accumulator.response(), fmt.Errorf("read OpenAI Responses stream: %w", err)
-	}
-	if err := flush(); err != nil {
-		return accumulator.response(), err
+	})
+	result := accumulator.response()
+	if err != nil {
+		return result, err
 	}
 	if !accumulator.completed {
-		return accumulator.response(), fmt.Errorf("OpenAI Responses stream ended without response.completed")
+		return result, &protocol.Error{Code: protocol.ErrorStreamIncomplete, Message: "Responses stream ended without a terminal response event"}
 	}
-	return accumulator.response(), nil
+	return result, nil
 }
 
 func (accumulator *responsesStreamAccumulator) consume(ctx context.Context, eventName string, event responsesStreamEvent, sink protocol.EventSink) error {
@@ -162,7 +107,7 @@ func (accumulator *responsesStreamAccumulator) consume(ctx context.Context, even
 		}
 		builder.arguments.WriteString(event.Delta)
 		return emitResponsesEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventToolCallDelta, ToolCallDelta: &protocol.ToolCallDelta{
-			Index: index, ID: builder.id, Name: builder.name, ArgumentsDelta: event.Delta,
+			Index: index, ArgumentsDelta: event.Delta,
 		}}, "tool call")
 	case "response.function_call_arguments.done":
 		index := accumulator.toolCallIndex(event.OutputIndex, event.ItemID)
@@ -180,10 +125,7 @@ func (accumulator *responsesStreamAccumulator) consume(ctx context.Context, even
 				builder = &responsesToolCallBuilder{id: event.Item.ID}
 				accumulator.toolCalls[index] = builder
 			}
-			builder.callID, builder.name = event.Item.CallID, event.Item.Name
-			return emitResponsesEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventToolCallDelta, ToolCallDelta: &protocol.ToolCallDelta{
-				Index: index, ID: builder.callID, Name: builder.name,
-			}}, "tool call")
+			return accumulator.setMetadata(ctx, sink, index, builder, event.Item.CallID, event.Item.Name)
 		}
 	case "response.output_item.done":
 		if event.Item.Type == "function_call" {
@@ -193,25 +135,37 @@ func (accumulator *responsesStreamAccumulator) consume(ctx context.Context, even
 				builder = &responsesToolCallBuilder{id: event.Item.ID}
 				accumulator.toolCalls[index] = builder
 			}
-			if builder.callID == "" {
-				builder.callID = event.Item.CallID
-			}
-			if builder.name == "" {
-				builder.name = event.Item.Name
+			if err := accumulator.setMetadata(ctx, sink, index, builder, event.Item.CallID, event.Item.Name); err != nil {
+				return err
 			}
 			return accumulator.setArguments(ctx, sink, index, builder, event.Item.Arguments)
 		}
 	case "response.completed":
+		if event.Response.Status == "" {
+			event.Response.Status = "completed"
+		}
 		accumulator.completed = true
 		return accumulator.mergeResponse(ctx, sink, event.Response)
 	case "response.incomplete":
+		if event.Response.Status == "" {
+			event.Response.Status = "incomplete"
+		}
 		accumulator.completed = true
 		return accumulator.mergeResponse(ctx, sink, event.Response)
 	case "response.failed", "error":
-		if event.Error != nil && event.Error.Message != "" {
-			return fmt.Errorf("OpenAI Responses stream error: %s", event.Error.Message)
+		if eventName == "response.failed" {
+			if event.Response.Status == "" {
+				event.Response.Status = "failed"
+			}
+			if err := accumulator.mergeResponse(ctx, sink, event.Response); err != nil {
+				return err
+			}
 		}
-		return fmt.Errorf("OpenAI Responses stream failed")
+		message := "OpenAI Responses stream failed"
+		if event.Error != nil && event.Error.Message != "" {
+			message = event.Error.Message
+		}
+		return &protocol.Error{Code: protocol.ErrorUpstream, Message: message}
 	}
 	return nil
 }
@@ -234,50 +188,31 @@ func (accumulator *responsesStreamAccumulator) mergeResponse(ctx context.Context
 	if hasUsage {
 		accumulator.usage = convertResponsesUsage(response.Usage)
 	}
-	if accumulator.text.Len() == 0 && response.OutputText != "" {
-		accumulator.text.WriteString(response.OutputText)
-		if err := emitResponsesEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventTextDelta, Delta: response.OutputText}, "text"); err != nil {
+	final, err := convertResponsesResponse(response, accumulator.providerName)
+	if err != nil {
+		return err
+	}
+	if text := final.Message.Text(); text != "" {
+		if err := reconcileText(ctx, sink, &accumulator.text, text, protocol.EventTextDelta); err != nil {
+			return err
+		}
+	}
+	if reasoning := final.Message.Reasoning(); reasoning != "" {
+		if err := reconcileText(ctx, sink, &accumulator.reasoning, reasoning, protocol.EventReasoningDelta); err != nil {
 			return err
 		}
 	}
 	for _, item := range response.Output {
 		switch item.Type {
-		case "message":
-			if accumulator.text.Len() == 0 {
-				for _, part := range item.Content {
-					if part.Type == "output_text" || part.Type == "text" || part.Type == "refusal" {
-						if part.Text != "" {
-							accumulator.text.WriteString(part.Text)
-							if err := emitResponsesEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventTextDelta, Delta: part.Text}, "text"); err != nil {
-								return err
-							}
-						}
-					}
-				}
-			}
-		case "reasoning":
-			if accumulator.reasoning.Len() == 0 {
-				for _, part := range item.Summary {
-					if part.Text != "" {
-						accumulator.reasoning.WriteString(part.Text)
-						if err := emitResponsesEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventReasoningDelta, Delta: part.Text}, "reasoning"); err != nil {
-							return err
-						}
-					}
-				}
-			}
 		case "function_call":
-			index := accumulator.toolCallIndex(0, item.ID)
+			index := accumulator.toolCallIndex(-1, item.ID)
 			builder := accumulator.toolCalls[index]
 			if builder == nil {
 				builder = &responsesToolCallBuilder{id: item.ID}
 				accumulator.toolCalls[index] = builder
 			}
-			if builder.callID == "" {
-				builder.callID = item.CallID
-			}
-			if builder.name == "" {
-				builder.name = item.Name
+			if err := accumulator.setMetadata(ctx, sink, index, builder, item.CallID, item.Name); err != nil {
+				return err
 			}
 			if err := accumulator.setArguments(ctx, sink, index, builder, item.Arguments); err != nil {
 				return err
@@ -293,6 +228,25 @@ func (accumulator *responsesStreamAccumulator) mergeResponse(ctx context.Context
 	return nil
 }
 
+func (accumulator *responsesStreamAccumulator) setMetadata(ctx context.Context, sink protocol.EventSink, index int, builder *responsesToolCallBuilder, id, name string) error {
+	if (builder.callID != "" && id != "" && builder.callID != id) || (builder.name != "" && name != "" && builder.name != name) {
+		return &protocol.Error{Code: protocol.ErrorDecode, Message: "tool metadata changed within one stream index"}
+	}
+	delta := &protocol.ToolCallDelta{Index: index}
+	if builder.callID == "" && id != "" {
+		builder.callID = id
+		delta.ID = id
+	}
+	if builder.name == "" && name != "" {
+		builder.name = name
+		delta.Name = name
+	}
+	if delta.ID == "" && delta.Name == "" {
+		return nil
+	}
+	return emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventToolCallDelta, ToolCallDelta: delta})
+}
+
 func (accumulator *responsesStreamAccumulator) setArguments(ctx context.Context, sink protocol.EventSink, index int, builder *responsesToolCallBuilder, final string) error {
 	if final == "" {
 		return nil
@@ -303,15 +257,12 @@ func (accumulator *responsesStreamAccumulator) setArguments(ctx context.Context,
 		if suffix != "" {
 			builder.arguments.WriteString(suffix)
 			return emitResponsesEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventToolCallDelta, ToolCallDelta: &protocol.ToolCallDelta{
-				Index: index, ID: builder.callID, Name: builder.name, ArgumentsDelta: suffix,
+				Index: index, ArgumentsDelta: suffix,
 			}}, "tool call")
 		}
 	}
-	if current == "" {
-		builder.arguments.WriteString(final)
-		return emitResponsesEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventToolCallDelta, ToolCallDelta: &protocol.ToolCallDelta{
-			Index: index, ID: builder.callID, Name: builder.name, ArgumentsDelta: final,
-		}}, "tool call")
+	if current != final {
+		return &protocol.Error{Code: protocol.ErrorDecode, Message: "final tool arguments disagree with streamed arguments"}
 	}
 	return nil
 }
@@ -328,7 +279,10 @@ func (accumulator *responsesStreamAccumulator) toolCallIndex(outputIndex int, it
 		}
 		return outputIndex
 	}
-	index := len(accumulator.toolCalls)
+	index := 0
+	for accumulator.toolCalls[index] != nil {
+		index++
+	}
 	if itemID != "" {
 		accumulator.indexesByID[itemID] = index
 	}
@@ -366,12 +320,19 @@ func (accumulator *responsesStreamAccumulator) response() protocol.ModelResponse
 	}
 }
 
-func emitResponsesEvent(ctx context.Context, sink protocol.EventSink, event protocol.StreamEvent, kind string) error {
-	if sink == nil {
+func emitResponsesEvent(ctx context.Context, sink protocol.EventSink, event protocol.StreamEvent, _ string) error {
+	return emitEvent(ctx, sink, event)
+}
+
+func reconcileText(ctx context.Context, sink protocol.EventSink, target *strings.Builder, final string, kind protocol.StreamEventType) error {
+	current := target.String()
+	if !strings.HasPrefix(final, current) {
+		return &protocol.Error{Code: protocol.ErrorDecode, Message: "final content disagrees with streamed content"}
+	}
+	suffix := strings.TrimPrefix(final, current)
+	if suffix == "" {
 		return nil
 	}
-	if err := sink.OnEvent(ctx, event); err != nil {
-		return fmt.Errorf("stream %s event: %w", kind, err)
-	}
-	return nil
+	target.WriteString(suffix)
+	return emitEvent(ctx, sink, protocol.StreamEvent{Type: kind, Delta: suffix})
 }

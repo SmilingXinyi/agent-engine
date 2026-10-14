@@ -3,10 +3,70 @@ package protocol
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/SmilingXinyi/agent-engine/ai-sdk/utils"
 )
+
+func (failure *Error) Error() string {
+	if failure.Provider == "" {
+		return fmt.Sprintf("%s: %s", failure.Code, failure.Message)
+	}
+	return fmt.Sprintf("%s %s: %s", failure.Provider, failure.Code, failure.Message)
+}
+
+func (failure *Error) Unwrap() error { return failure.Cause }
+
+// Clone returns a snapshot including nested extension maps and raw JSON.
+func (request ModelRequest) Clone() ModelRequest {
+	request.Messages = append([]Message(nil), request.Messages...)
+	for index := range request.Messages {
+		request.Messages[index].Parts = cloneContentParts(request.Messages[index].Parts)
+		request.Messages[index].Metadata = utils.CloneJSONMap(request.Messages[index].Metadata)
+	}
+	request.Tools = append([]ToolDefinition(nil), request.Tools...)
+	for index := range request.Tools {
+		request.Tools[index].InputSchema = append(json.RawMessage(nil), request.Tools[index].InputSchema...)
+	}
+	request.ProviderOptions = utils.CloneJSONMap(request.ProviderOptions)
+	request.Metadata = utils.CloneMap(request.Metadata)
+	if request.Temperature != nil {
+		value := *request.Temperature
+		request.Temperature = &value
+	}
+	if request.MaxOutputTokens != nil {
+		value := *request.MaxOutputTokens
+		request.MaxOutputTokens = &value
+	}
+	if request.Reasoning != nil {
+		value := *request.Reasoning
+		request.Reasoning = &value
+	}
+	if request.OutputFormat != nil {
+		value := *request.OutputFormat
+		value.Schema = append(json.RawMessage(nil), value.Schema...)
+		request.OutputFormat = &value
+	}
+	return request
+}
+
+func (response ModelResponse) Clone() ModelResponse {
+	response.Message.Parts = cloneContentParts(response.Message.Parts)
+	response.Message.Metadata = utils.CloneJSONMap(response.Message.Metadata)
+	response.Metadata = utils.CloneMap(response.Metadata)
+	response.Raw = append(json.RawMessage(nil), response.Raw...)
+	response.CallInfo = response.CallInfo.Clone()
+	return response
+}
+
+func (info CallInfo) Clone() CallInfo {
+	info.Headers = utils.CloneMap(info.Headers)
+	for name, values := range info.Headers {
+		info.Headers[name] = append([]string(nil), values...)
+	}
+	return info
+}
 
 // TextMessage builds a Message with a single text ContentPart.
 func TextMessage(role Role, text string) Message {
@@ -88,7 +148,7 @@ func cloneToolCall(call ToolCall) ToolCall {
 
 func cloneToolResult(result ToolResult) ToolResult {
 	result.Content = cloneContentParts(result.Content)
-	result.Metadata = utils.CloneMap(result.Metadata)
+	result.Metadata = utils.CloneJSONMap(result.Metadata)
 	return result
 }
 
@@ -96,7 +156,7 @@ func cloneContentParts(parts []ContentPart) []ContentPart {
 	result := make([]ContentPart, len(parts))
 	for index, part := range parts {
 		result[index] = part
-		result[index].Metadata = utils.CloneMap(part.Metadata)
+		result[index].Metadata = utils.CloneJSONMap(part.Metadata)
 		result[index].Data = append(json.RawMessage(nil), part.Data...)
 		if part.Media != nil {
 			media := *part.Media

@@ -1,63 +1,98 @@
-// Package openai implements an OpenAI-compatible adapter for ai-sdk.
+// Package openai implements Chat Completions and Responses model calls, with
+// an explicit native HTTP escape hatch for gateways and provider extensions.
 package openai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
-	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
+	"github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
+	"github.com/SmilingXinyi/agent-engine/ai-sdk/utils"
 )
-
-const defaultTimeout = 2 * time.Minute
 
 const (
 	defaultMaxResponseBytes = 16 << 20
-	defaultMaxRetries       = 2
+	defaultMaxEventBytes    = 1 << 20
 	defaultRetryBackoff     = 200 * time.Millisecond
+	defaultMaxBackoff       = 5 * time.Second
 )
 
-type Config struct {
-	BaseURL string
-	APIKey  string
-	// APIType selects the OpenAI-compatible endpoint and wire format. An empty
-	// value keeps the historical Chat Completions behavior.
-	APIType          APIType
-	Headers          map[string]string
-	HTTPClient       *http.Client
-	MaxResponseBytes int64
-	// MaxRetries controls retries for transient HTTP failures. Zero uses the
-	// default; a negative value disables retries.
-	MaxRetries   int
-	RetryBackoff time.Duration
-	// Name overrides the provider identity reported via Provider.Name and
-	// surfaced in hooks (RequestInfo.Provider / ResponseInfo.Provider). This
-	// lets OpenAI-compatible backends (e.g. DeepSeek) report their own name
-	// without a dedicated provider package. Defaults to "openai".
-	Name string
-}
-
-// APIType identifies the OpenAI API surface used by the provider.
 type APIType string
 
 const (
 	APITypeChatCompletions APIType = "chat_completions"
 	APITypeResponsesAPI    APIType = "responses_api"
-
-	// Short aliases make configuration convenient while retaining explicit
-	// names for callers that prefer them.
-	ChatCompletions    APIType = APITypeChatCompletions
-	ChatCompletionsAPI APIType = APITypeChatCompletions
-	ResponsesAPI       APIType = APITypeResponsesAPI
-	APIChatCompletions         = APITypeChatCompletions
-	APIResponses               = APITypeResponsesAPI
 )
+
+// RetryPolicy is opt-in. MaxRetries=0 sends exactly one application attempt.
+// Retries stop before consuming a successful body. Retry-After is a minimum
+// delay and may exceed MaxBackoff; context bounds the entire call.
+type RetryPolicy struct {
+	MaxRetries int
+	Backoff    time.Duration
+	MaxBackoff time.Duration
+}
+
+// AttemptInfo is emitted after each HTTP attempt, before its optional backoff.
+type AttemptInfo struct {
+	Number     int
+	StatusCode int
+	Error      error
+	WillRetry  bool
+	RetryDelay time.Duration
+}
+
+type Config struct {
+	BaseURL string
+	APIKey  string
+	APIType APIType
+	Name    string
+	Headers map[string]string
+	// HTTPClient owns transport and timeout configuration when supplied.
+	HTTPClient *http.Client
+	// ResponseHeaderTimeout applies only to the default transport. Zero disables
+	// this timeout. There is no default total timeout; callers should use context.
+	ResponseHeaderTimeout time.Duration
+	Retry                 RetryPolicy
+	OnAttempt             func(context.Context, AttemptInfo) error
+	// MaxResponseBytes defaults to 16 MiB. MaxStreamBytes=0 has no total stream
+	// limit. MaxEventBytes defaults to 1 MiB including SSE framing.
+	MaxResponseBytes int64
+	MaxStreamBytes   int64
+	MaxEventBytes    int64
+	// RequireDone requires [DONE] for Chat Completions. Normally a finish_reason
+	// followed by clean EOF also completes the stream. It does not affect Responses.
+	RequireDone bool
+	// OnRawEvent receives every SSE frame before normalization, including comments,
+	// unknown events and [DONE]. Its buffers belong to the callback and are retained
+	// safely. Returning an error aborts the call without automatic replay.
+	OnRawEvent func(context.Context, RawEvent) error
+}
+
+// RawEvent is a complete SSE frame. Frame preserves body bytes (including line
+// endings); Data follows SSE data-line joining. HTTP read boundaries are irrelevant.
+type RawEvent struct {
+	Name  string
+	ID    string
+	Data  []byte
+	Frame []byte
+}
+
+// NativeResponse exposes the unnormalized final HTTP response, including non-2xx
+// responses. The caller owns Body and must close it. Normalized size limits and
+// OnRawEvent do not apply; native consumers control their own reading and limits.
+type NativeResponse struct {
+	StatusCode int
+	Headers    http.Header
+	Body       io.ReadCloser
+	Attempts   int
+}
 
 type Provider struct {
 	name             string
@@ -66,19 +101,36 @@ type Provider struct {
 	apiKey           string
 	headers          map[string]string
 	httpClient       *http.Client
+	retry            RetryPolicy
+	onAttempt        func(context.Context, AttemptInfo) error
 	maxResponseBytes int64
-	maxRetries       int
-	retryBackoff     time.Duration
+	maxStreamBytes   int64
+	maxEventBytes    int64
+	requireDone      bool
+	onRawEvent       func(context.Context, RawEvent) error
 }
 
 func New(config Config) (*Provider, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
-	if baseURL == "" {
-		return nil, errors.New("openai base URL is required")
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, &protocol.Error{Code: protocol.ErrorInvalidRequest, Provider: "openai", Message: "base URL must be an HTTP(S) URL without query or fragment", Cause: err}
+	}
+	if config.ResponseHeaderTimeout < 0 || config.Retry.MaxRetries < 0 || config.Retry.Backoff < 0 || config.Retry.MaxBackoff < 0 || config.MaxResponseBytes < 0 || config.MaxStreamBytes < 0 || config.MaxEventBytes < 0 {
+		return nil, &protocol.Error{Code: protocol.ErrorInvalidRequest, Provider: "openai", Message: "timeouts, retries and limits must be nonnegative"}
 	}
 	client := config.HTTPClient
+	if client != nil && config.ResponseHeaderTimeout != 0 {
+		return nil, &protocol.Error{Code: protocol.ErrorInvalidRequest, Provider: "openai", Message: "configure header timeout on the injected HTTPClient"}
+	}
 	if client == nil {
-		client = &http.Client{Timeout: defaultTimeout}
+		transport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return nil, &protocol.Error{Code: protocol.ErrorInvalidRequest, Provider: "openai", Message: "custom default transport requires an explicit HTTPClient"}
+		}
+		ownedTransport := transport.Clone()
+		ownedTransport.ResponseHeaderTimeout = config.ResponseHeaderTimeout
+		client = &http.Client{Transport: ownedTransport}
 	}
 	name := strings.TrimSpace(config.Name)
 	if name == "" {
@@ -89,110 +141,101 @@ func New(config Config) (*Provider, error) {
 		apiType = APITypeChatCompletions
 	}
 	if apiType != APITypeChatCompletions && apiType != APITypeResponsesAPI {
-		return nil, fmt.Errorf("unsupported OpenAI API type %q", apiType)
+		return nil, &protocol.Error{Code: protocol.ErrorInvalidRequest, Provider: name, Message: fmt.Sprintf("unsupported OpenAI API type %q", apiType)}
+	}
+	retry := config.Retry
+	if retry.Backoff == 0 {
+		retry.Backoff = defaultRetryBackoff
+	}
+	if retry.MaxBackoff == 0 {
+		retry.MaxBackoff = defaultMaxBackoff
 	}
 	return &Provider{
-		name:             name,
-		apiType:          apiType,
-		baseURL:          baseURL,
-		apiKey:           strings.TrimSpace(config.APIKey),
-		headers:          cloneStringMap(config.Headers),
-		httpClient:       client,
+		name: name, apiType: apiType, baseURL: baseURL, apiKey: strings.TrimSpace(config.APIKey),
+		headers: utils.CloneMap(config.Headers), httpClient: client, retry: retry, onAttempt: config.OnAttempt,
 		maxResponseBytes: positiveOrDefault(config.MaxResponseBytes, defaultMaxResponseBytes),
-		maxRetries:       configuredRetries(config.MaxRetries),
-		retryBackoff:     positiveDurationOrDefault(config.RetryBackoff, defaultRetryBackoff),
+		maxStreamBytes:   config.MaxStreamBytes, maxEventBytes: positiveOrDefault(config.MaxEventBytes, defaultMaxEventBytes),
+		requireDone: config.RequireDone, onRawEvent: config.OnRawEvent,
 	}, nil
 }
 
-func (provider *Provider) Name() string {
-	return provider.name
+func (provider *Provider) Name() string { return provider.name }
+
+func (provider *Provider) Capabilities() protocol.Capabilities {
+	input := []protocol.ContentType{protocol.ContentText, protocol.ContentReasoning, protocol.ContentImage, protocol.ContentFile, protocol.ContentToolCall, protocol.ContentProvider}
+	if provider.apiType == APITypeChatCompletions {
+		input = append(input, protocol.ContentAudio)
+	}
+	return protocol.Capabilities{Streaming: true, Tools: true, Reasoning: true, StructuredOutput: true, InputContent: input, ToolResultContent: []protocol.ContentType{protocol.ContentText}}
 }
 
-func (provider *Provider) Generate(ctx context.Context, request protocol.ModelRequest) (protocol.ModelResponse, error) {
+func (provider *Provider) Generate(ctx context.Context, request protocol.ModelRequest) (result protocol.ModelResponse, err error) {
 	payload, err := provider.buildRequest(request, false)
 	if err != nil {
-		return protocol.ModelResponse{}, err
+		return result, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
-	response, err := provider.send(ctx, payload)
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return protocol.ModelResponse{}, err
+		return result, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
-	defer func() { _ = response.Body.Close() }()
-	if err := validateHTTPResponse(response); err != nil {
-		return protocol.ModelResponse{}, err
+	response, info, err := provider.send(ctx, body, false)
+	result.CallInfo = info
+	if err != nil {
+		return result, err
+	}
+	defer response.Body.Close()
+	if err = provider.validateHTTPResponse(response, info); err != nil {
+		return result, err
 	}
 	bodyBytes, err := io.ReadAll(io.LimitReader(response.Body, provider.maxResponseBytes+1))
 	if err != nil {
-		return protocol.ModelResponse{}, fmt.Errorf("read OpenAI response: %w", err)
+		return result, provider.failure(err, protocol.ErrorTransport, info)
 	}
 	if int64(len(bodyBytes)) > provider.maxResponseBytes {
-		return protocol.ModelResponse{}, fmt.Errorf("OpenAI response exceeds %d bytes", provider.maxResponseBytes)
+		return result, provider.failure(fmt.Errorf("response exceeds %d bytes", provider.maxResponseBytes), protocol.ErrorResponseTooLarge, info)
 	}
 	if provider.apiType == APITypeResponsesAPI {
-		var body responsesResponse
-		if err := json.Unmarshal(bodyBytes, &body); err != nil {
-			return protocol.ModelResponse{}, fmt.Errorf("decode OpenAI Responses response: %w", err)
+		var decoded responsesResponse
+		if err = json.Unmarshal(bodyBytes, &decoded); err == nil {
+			result, err = convertResponsesResponse(decoded, provider.name)
 		}
-		return convertResponsesResponse(body, provider.name)
+	} else {
+		var decoded chatResponse
+		if err = json.Unmarshal(bodyBytes, &decoded); err == nil {
+			result, err = convertResponse(decoded, provider.name)
+		}
 	}
-	var body chatResponse
-	if err := json.Unmarshal(bodyBytes, &body); err != nil {
-		return protocol.ModelResponse{}, fmt.Errorf("decode OpenAI response: %w", err)
+	result.CallInfo = info
+	result.Raw = append(json.RawMessage(nil), bodyBytes...)
+	if err != nil {
+		return result, provider.failure(err, protocol.ErrorDecode, info)
 	}
-	return convertResponse(body, provider.name)
+	if result.FinishReason == protocol.FinishError {
+		return result, provider.failure(fmt.Errorf("upstream returned a failed model response"), protocol.ErrorUpstream, info)
+	}
+	result.Complete = true
+	return result, nil
 }
 
-func (provider *Provider) send(ctx context.Context, payload map[string]any) (*http.Response, error) {
-	body, err := json.Marshal(payload)
+// DoNative sends an exact JSON object to the configured API endpoint. It does
+// not inject model, stream or other fields. Retries follow Config.Retry; final
+// HTTP failures are returned as NativeResponse, not normalized SDK errors.
+func (provider *Provider) DoNative(ctx context.Context, body json.RawMessage) (*NativeResponse, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil || object == nil {
+		return nil, provider.failure(fmt.Errorf("native request must be a JSON object"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	var stream bool
+	if value, exists := object["stream"]; exists {
+		if err := json.Unmarshal(value, &stream); err != nil {
+			return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
+		}
+	}
+	response, info, err := provider.send(ctx, append([]byte(nil), body...), stream)
 	if err != nil {
-		return nil, fmt.Errorf("encode OpenAI request: %w", err)
+		return nil, err
 	}
-	newRequest := func() (*http.Request, error) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.endpoint(), bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("create OpenAI request: %w", err)
-		}
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Accept", "application/json")
-		if stream, _ := payload["stream"].(bool); stream {
-			request.Header.Set("Accept", "text/event-stream")
-		}
-		if provider.apiKey != "" {
-			request.Header.Set("Authorization", "Bearer "+provider.apiKey)
-		}
-		for name, value := range provider.headers {
-			request.Header.Set(name, value)
-		}
-		return request, nil
-	}
-	var lastErr error
-	for attempt := 0; attempt <= provider.maxRetries; attempt++ {
-		request, err := newRequest()
-		if err != nil {
-			return nil, err
-		}
-		response, err := provider.httpClient.Do(request)
-		if err == nil && !isRetryableStatus(response.StatusCode) {
-			return response, nil
-		}
-		if err == nil {
-			lastErr = fmt.Errorf("OpenAI HTTP %d", response.StatusCode)
-			_ = response.Body.Close()
-		} else {
-			lastErr = err
-		}
-		if attempt == provider.maxRetries {
-			break
-		}
-		timer := time.NewTimer(provider.retryBackoff * time.Duration(1<<attempt))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return nil, fmt.Errorf("send OpenAI request after %d attempts: %w", provider.maxRetries+1, lastErr)
+	return &NativeResponse{StatusCode: response.StatusCode, Headers: response.Header.Clone(), Body: response.Body, Attempts: info.Attempts}, nil
 }
 
 func (provider *Provider) endpoint() string {
@@ -207,33 +250,32 @@ func (provider *Provider) endpoint() string {
 }
 
 func (provider *Provider) buildRequest(request protocol.ModelRequest, stream bool) (map[string]any, error) {
+	if strings.TrimSpace(request.Model) == "" {
+		return nil, fmt.Errorf("model is required")
+	}
+	if request.MaxOutputTokens != nil && *request.MaxOutputTokens <= 0 {
+		return nil, fmt.Errorf("max output tokens must be positive")
+	}
+	if request.Reasoning != nil && strings.TrimSpace(request.Reasoning.Effort) == "" {
+		return nil, fmt.Errorf("reasoning effort is required")
+	}
+	if candidates, exists := request.ProviderOptions["n"]; exists {
+		encoded, err := json.Marshal(candidates)
+		var count int
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(encoded, &count); err != nil {
+			return nil, fmt.Errorf("n must be an integer")
+		}
+		if count != 1 {
+			return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "normalized calls return one candidate; use DoNative for multiple candidates"}
+		}
+	}
 	if provider.apiType == APITypeResponsesAPI {
 		return buildResponsesRequest(request, stream)
 	}
 	return buildRequest(request, stream)
-}
-
-func validateHTTPResponse(response *http.Response) error {
-	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
-		return nil
-	}
-	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	var payload struct {
-		Error struct {
-			Message string `json:"message"`
-			Type    string `json:"type"`
-			Code    any    `json:"code"`
-		} `json:"error"`
-	}
-	message := strings.TrimSpace(string(body))
-	if json.Unmarshal(body, &payload) == nil && payload.Error.Message != "" {
-		message = payload.Error.Message
-	}
-	return fmt.Errorf("OpenAI HTTP %d: %s", response.StatusCode, message)
-}
-
-func isRetryableStatus(status int) bool {
-	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
 }
 
 func positiveOrDefault(value, fallback int64) int64 {
@@ -241,32 +283,4 @@ func positiveOrDefault(value, fallback int64) int64 {
 		return value
 	}
 	return fallback
-}
-
-func configuredRetries(value int) int {
-	if value < 0 {
-		return 0
-	}
-	if value == 0 {
-		return defaultMaxRetries
-	}
-	return value
-}
-
-func positiveDurationOrDefault(value, fallback time.Duration) time.Duration {
-	if value > 0 {
-		return value
-	}
-	return fallback
-}
-
-func cloneStringMap(source map[string]string) map[string]string {
-	if source == nil {
-		return nil
-	}
-	result := make(map[string]string, len(source))
-	for key, value := range source {
-		result[key] = value
-	}
-	return result
 }

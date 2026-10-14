@@ -49,32 +49,31 @@ type responsesOutputItem struct {
 }
 
 type responsesContentPart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type    string `json:"type"`
+	Text    string `json:"text"`
+	Refusal string `json:"refusal"`
 }
 
 func buildResponsesRequest(request protocol.ModelRequest, stream bool) (map[string]any, error) {
 	payload := make(map[string]any, len(request.ProviderOptions)+8)
-	_, hasExplicitReasoning := request.ProviderOptions["reasoning"]
 	for key, value := range request.ProviderOptions {
-		if key == "reasoning_effort" && !hasExplicitReasoning {
-			if effort, ok := value.(string); ok && strings.TrimSpace(effort) != "" {
-				payload["reasoning"] = map[string]any{"effort": effort}
-				continue
-			}
-		}
-		if key == "thinking" {
-			if !hasExplicitReasoning && applyResponsesThinkingOption(payload, value) {
-				continue
-			}
-			if hasExplicitReasoning {
-				continue
-			}
-		}
 		if isReservedResponsesRequestField(key) {
 			return nil, fmt.Errorf("provider option %q must use the common ModelRequest field", key)
 		}
+		if key == "extra_body" {
+			return nil, fmt.Errorf("extra_body is an SDK wrapper; pass native fields directly in ProviderOptions")
+		}
 		payload[key] = value
+	}
+	if request.Reasoning != nil {
+		payload["reasoning"] = map[string]any{"effort": request.Reasoning.Effort}
+	}
+	if request.OutputFormat != nil {
+		format, err := encodeOutputFormat(request.OutputFormat, true)
+		if err != nil {
+			return nil, err
+		}
+		payload["text"] = map[string]any{"format": format}
 	}
 	payload["model"] = request.Model
 	payload["stream"] = stream
@@ -82,7 +81,7 @@ func buildResponsesRequest(request protocol.ModelRequest, stream bool) (map[stri
 	var instructions []string
 	input := make([]any, 0, len(request.Messages))
 	for index, message := range request.Messages {
-		if message.Role == protocol.RoleSystem {
+		if message.Role == protocol.RoleSystem || message.Role == protocol.RoleDeveloper {
 			text, err := responsesMessageText(message)
 			if err != nil {
 				return nil, fmt.Errorf("encode message %d: %w", index, err)
@@ -140,35 +139,9 @@ func buildResponsesRequest(request protocol.ModelRequest, stream bool) (map[stri
 	return payload, nil
 }
 
-// applyResponsesThinkingOption translates the adapter's existing thinking
-// option into the Responses API reasoning shape. This is especially useful
-// for callers that use {"type":"disabled"} with Chat Completions-compatible
-// backends: Responses API expects reasoning.effort="none" instead.
-func applyResponsesThinkingOption(payload map[string]any, value any) bool {
-	thinking, ok := value.(map[string]any)
-	if !ok {
-		return false
-	}
-	typeValue, _ := thinking["type"].(string)
-	switch strings.ToLower(strings.TrimSpace(typeValue)) {
-	case "disabled":
-		payload["reasoning"] = map[string]any{"effort": "none"}
-		return true
-	case "enabled":
-		if effort, ok := thinking["effort"].(string); ok && strings.TrimSpace(effort) != "" {
-			payload["reasoning"] = map[string]any{"effort": effort}
-		} else {
-			payload["reasoning"] = map[string]any{"effort": "medium"}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
 func isReservedResponsesRequestField(key string) bool {
 	switch key {
-	case "model", "input", "instructions", "tools", "stream", "temperature", "max_output_tokens", "tool_choice":
+	case "model", "input", "instructions", "tools", "stream", "temperature", "max_output_tokens", "tool_choice", "reasoning", "text":
 		return true
 	default:
 		return false
@@ -206,6 +179,12 @@ func encodeResponsesMessage(message protocol.Message) ([]map[string]any, error) 
 				contentType = "output_text"
 			}
 			content = append(content, map[string]any{"type": contentType, "text": part.Text})
+		case protocol.ContentProvider:
+			block, err := decodeNativeBlock(part.Data)
+			if err != nil {
+				return nil, err
+			}
+			content = append(content, block)
 		case protocol.ContentReasoning:
 			// Reasoning summaries are output-only in the Responses API and
 			// cannot be replayed as ordinary input content.
@@ -229,7 +208,7 @@ func encodeResponsesMessage(message protocol.Message) ([]map[string]any, error) 
 			}
 			content = append(content, file)
 		case protocol.ContentAudio:
-			return nil, fmt.Errorf("content type %q is not supported by Responses API adapter", part.Type)
+			return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: fmt.Sprintf("content type %q is not supported by Responses API adapter", part.Type)}
 		case protocol.ContentToolCall:
 			if message.Role != protocol.RoleAssistant || part.ToolCall == nil {
 				return nil, fmt.Errorf("tool call part is missing call data")
@@ -340,6 +319,9 @@ func convertResponsesResponse(response responsesResponse, providerName string) (
 		switch item.Type {
 		case "message":
 			for _, part := range item.Content {
+				if part.Type == "refusal" {
+					part.Text = part.Refusal
+				}
 				if part.Type == "output_text" || part.Type == "text" || part.Type == "refusal" {
 					if part.Text != "" {
 						message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentText, Text: part.Text})
@@ -363,12 +345,16 @@ func convertResponsesResponse(response responsesResponse, providerName string) (
 		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentText, Text: response.OutputText})
 	}
 	finishReason := responsesFinishReason(response.Status, response.IncompleteDetail.Reason, toolCalls > 0)
-	return protocol.ModelResponse{
-		Message:      message,
-		FinishReason: finishReason,
-		Usage:        convertResponsesUsage(response.Usage),
-		Metadata:     responseMetadata(providerName, response.ID, response.Model, response.CreatedAt),
-	}, nil
+	result := protocol.ModelResponse{
+		Message: message, FinishReason: finishReason, Usage: convertResponsesUsage(response.Usage),
+		Metadata: responseMetadata(providerName, response.ID, response.Model, response.CreatedAt),
+	}
+	switch response.Status {
+	case "completed", "incomplete", "failed", "cancelled":
+		return result, nil
+	default:
+		return result, &protocol.Error{Code: protocol.ErrorStreamIncomplete, Message: "Responses result has no terminal status"}
+	}
 }
 
 func convertResponsesUsage(usage responsesUsage) protocol.Usage {
@@ -380,7 +366,10 @@ func convertResponsesUsage(usage responsesUsage) protocol.Usage {
 }
 
 func responsesFinishReason(status, incompleteReason string, hasToolCalls bool) protocol.FinishReason {
-	if hasToolCalls {
+	if status == "failed" || status == "cancelled" {
+		return protocol.FinishError
+	}
+	if status == "completed" && hasToolCalls {
 		return protocol.FinishToolCalls
 	}
 	switch status {

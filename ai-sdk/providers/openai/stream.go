@@ -1,10 +1,11 @@
 package openai
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -50,70 +51,78 @@ type streamAccumulator struct {
 	created      int64
 }
 
-func (provider *Provider) Stream(ctx context.Context, request protocol.ModelRequest, sink protocol.EventSink) (protocol.ModelResponse, error) {
-	if provider.apiType == APITypeResponsesAPI {
-		return provider.streamResponses(ctx, request, sink)
-	}
+// Stream returns partial content with Complete=false on any error. A successful
+// call emits EventFinish once, after all deltas and usage have been delivered.
+func (provider *Provider) Stream(ctx context.Context, request protocol.ModelRequest, sink protocol.EventSink) (result protocol.ModelResponse, err error) {
 	payload, err := provider.buildRequest(request, true)
 	if err != nil {
-		return protocol.ModelResponse{}, err
+		return result, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
-	response, err := provider.send(ctx, payload)
+	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return protocol.ModelResponse{}, err
+		return result, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
-	defer func() { _ = response.Body.Close() }()
-	if err := validateHTTPResponse(response); err != nil {
-		return protocol.ModelResponse{}, err
+	response, info, err := provider.send(ctx, encoded, true)
+	result.CallInfo = info
+	if err != nil {
+		return result, err
 	}
+	defer response.Body.Close()
+	if err = provider.validateHTTPResponse(response, info); err != nil {
+		return result, err
+	}
+	if provider.apiType == APITypeResponsesAPI {
+		result, err = provider.streamResponses(ctx, response.Body, sink)
+	} else {
+		result, err = provider.streamChat(ctx, response.Body, sink)
+	}
+	result.CallInfo = info
+	if err != nil {
+		result.Complete = false
+		return result, provider.failure(err, protocol.ErrorTransport, info)
+	}
+	if result.FinishReason == protocol.FinishError {
+		return result, provider.failure(fmt.Errorf("upstream reported a stream failure"), protocol.ErrorUpstream, info)
+	}
+	if err = emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventFinish, FinishReason: result.FinishReason}); err != nil {
+		result.Complete = false
+		return result, provider.failure(err, protocol.ErrorSink, info)
+	}
+	result.Complete = true
+	return result, nil
+}
 
-	accumulator := streamAccumulator{
-		toolCalls:    make(map[int]*toolCallBuilder),
-		providerName: provider.name,
-	}
-	scanner := bufio.NewScanner(response.Body)
-	maxLineBytes := provider.maxResponseBytes
-	if maxLineBytes > 10*1024*1024 {
-		maxLineBytes = 10 * 1024 * 1024
-	}
-	scanner.Buffer(make([]byte, 64*1024), int(maxLineBytes))
+func (provider *Provider) streamChat(ctx context.Context, body io.Reader, sink protocol.EventSink) (protocol.ModelResponse, error) {
+	accumulator := streamAccumulator{toolCalls: make(map[int]*toolCallBuilder), providerName: provider.name}
 	receivedDone := false
-	var totalBytes int64
-	for scanner.Scan() {
-		totalBytes += int64(len(scanner.Bytes()))
-		if totalBytes > provider.maxResponseBytes {
-			return accumulator.response(), fmt.Errorf("OpenAI stream response exceeds %d bytes", provider.maxResponseBytes)
+	err := provider.readSSE(ctx, body, func(event RawEvent) error {
+		if len(event.Data) == 0 {
+			return nil
 		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
+		if bytes.Equal(bytes.TrimSpace(event.Data), []byte("[DONE]")) {
 			receivedDone = true
-			break
+			return errSSEComplete
 		}
 		var chunk streamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return accumulator.response(), fmt.Errorf("decode OpenAI stream chunk: %w", err)
+		if err := json.Unmarshal(event.Data, &chunk); err != nil {
+			return &protocol.Error{Code: protocol.ErrorDecode, Message: err.Error(), Cause: err}
 		}
 		if chunk.Error != nil {
-			return accumulator.response(), fmt.Errorf("OpenAI stream error: %s", chunk.Error.Message)
+			return &protocol.Error{Code: protocol.ErrorUpstream, Message: chunk.Error.Message}
 		}
-		if err := accumulator.consume(ctx, chunk, sink); err != nil {
-			return accumulator.response(), err
-		}
+		return accumulator.consume(ctx, chunk, sink)
+	})
+	result := accumulator.response()
+	if err != nil {
+		return result, err
 	}
-	if err := scanner.Err(); err != nil {
-		return accumulator.response(), fmt.Errorf("read OpenAI stream: %w", err)
+	if !receivedDone && (provider.requireDone || accumulator.finishReason == "") {
+		return result, &protocol.Error{Code: protocol.ErrorStreamIncomplete, Message: "stream ended without [DONE] or a finish reason"}
 	}
-	if !receivedDone {
-		return accumulator.response(), fmt.Errorf("OpenAI stream ended without [DONE]")
+	if result.FinishReason == "" {
+		result.FinishReason = protocol.FinishStop
 	}
-	return accumulator.response(), nil
+	return result, nil
 }
 
 func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamChunk, sink protocol.EventSink) error {
@@ -130,7 +139,7 @@ func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamC
 		accumulator.usage = convertUsage(chunk.Usage)
 		if sink != nil {
 			usage := accumulator.usage
-			if err := sink.OnEvent(ctx, protocol.StreamEvent{Type: protocol.EventUsage, Usage: &usage}); err != nil {
+			if err := emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventUsage, Usage: &usage}); err != nil {
 				return fmt.Errorf("stream usage event: %w", err)
 			}
 		}
@@ -142,7 +151,7 @@ func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamC
 		if choice.Delta.Content != "" {
 			accumulator.text.WriteString(choice.Delta.Content)
 			if sink != nil {
-				if err := sink.OnEvent(ctx, protocol.StreamEvent{Type: protocol.EventTextDelta, Delta: choice.Delta.Content}); err != nil {
+				if err := emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventTextDelta, Delta: choice.Delta.Content}); err != nil {
 					return fmt.Errorf("stream text event: %w", err)
 				}
 			}
@@ -154,7 +163,7 @@ func (accumulator *streamAccumulator) consume(ctx context.Context, chunk streamC
 		if reasoning != "" {
 			accumulator.reasoning.WriteString(reasoning)
 			if sink != nil {
-				if err := sink.OnEvent(ctx, protocol.StreamEvent{Type: protocol.EventReasoningDelta, Delta: reasoning}); err != nil {
+				if err := emitEvent(ctx, sink, protocol.StreamEvent{Type: protocol.EventReasoningDelta, Delta: reasoning}); err != nil {
 					return fmt.Errorf("stream reasoning event: %w", err)
 				}
 			}
@@ -211,13 +220,7 @@ func (accumulator *streamAccumulator) response() protocol.ModelResponse {
 		message.Parts = append(message.Parts, protocol.ContentPart{Type: protocol.ContentToolCall, ToolCall: &call})
 	}
 	finishReason := accumulator.finishReason
-	if finishReason == "" {
-		if len(accumulator.toolCalls) > 0 {
-			finishReason = protocol.FinishToolCalls
-		} else {
-			finishReason = protocol.FinishStop
-		}
-	}
+
 	return protocol.ModelResponse{
 		Message:      message,
 		FinishReason: finishReason,

@@ -69,16 +69,11 @@ func buildRequest(request protocol.ModelRequest, stream bool) (map[string]any, e
 	}
 	payload := make(map[string]any, len(request.ProviderOptions)+8)
 	for key, value := range request.ProviderOptions {
-		if key == "reasoning" {
-			if reasoning, ok := value.(map[string]any); ok {
-				if effort, ok := reasoning["effort"].(string); ok && strings.TrimSpace(effort) != "" {
-					payload["reasoning_effort"] = effort
-					continue
-				}
-			}
-		}
 		if isReservedRequestField(key) {
 			return nil, fmt.Errorf("provider option %q must use the common ModelRequest field", key)
+		}
+		if key == "extra_body" {
+			return nil, fmt.Errorf("extra_body is an SDK wrapper; pass native fields directly in ProviderOptions")
 		}
 		payload[key] = value
 	}
@@ -86,7 +81,19 @@ func buildRequest(request protocol.ModelRequest, stream bool) (map[string]any, e
 	payload["messages"] = messages
 	payload["stream"] = stream
 	if stream {
-		payload["stream_options"] = map[string]any{"include_usage": true}
+		if _, exists := payload["stream_options"]; !exists {
+			payload["stream_options"] = map[string]any{"include_usage": true}
+		}
+	}
+	if request.Reasoning != nil {
+		payload["reasoning_effort"] = request.Reasoning.Effort
+	}
+	if request.OutputFormat != nil {
+		format, err := encodeOutputFormat(request.OutputFormat, false)
+		if err != nil {
+			return nil, err
+		}
+		payload["response_format"] = format
 	}
 	if request.Temperature != nil {
 		payload["temperature"] = *request.Temperature
@@ -128,7 +135,7 @@ func buildRequest(request protocol.ModelRequest, stream bool) (map[string]any, e
 
 func isReservedRequestField(key string) bool {
 	switch key {
-	case "model", "messages", "tools", "stream", "stream_options", "temperature", "max_tokens", "tool_choice":
+	case "model", "messages", "tools", "stream", "temperature", "max_tokens", "max_completion_tokens", "tool_choice", "reasoning_effort", "response_format":
 		return true
 	default:
 		return false
@@ -157,7 +164,7 @@ func encodeMessages(messages []protocol.Message) ([]chatMessage, error) {
 
 func encodeMessage(message protocol.Message) (chatMessage, error) {
 	switch message.Role {
-	case protocol.RoleSystem, protocol.RoleUser, protocol.RoleAssistant:
+	case protocol.RoleSystem, protocol.RoleDeveloper, protocol.RoleUser, protocol.RoleAssistant:
 	default:
 		return chatMessage{}, fmt.Errorf("unsupported message role %q", message.Role)
 	}
@@ -185,7 +192,7 @@ func encodeMessage(message protocol.Message) (chatMessage, error) {
 			}
 			contentParts = append(contentParts, filePart)
 		case protocol.ContentToolCall:
-			if part.ToolCall == nil {
+			if message.Role != protocol.RoleAssistant || part.ToolCall == nil {
 				return chatMessage{}, fmt.Errorf("tool call part is missing call data")
 			}
 			encoded.ToolCalls = append(encoded.ToolCalls, chatToolCall{
@@ -193,7 +200,20 @@ func encodeMessage(message protocol.Message) (chatMessage, error) {
 				Function: chatFunction{Name: part.ToolCall.Name, Arguments: string(part.ToolCall.Arguments)},
 			})
 		case protocol.ContentAudio:
-			return chatMessage{}, fmt.Errorf("content type %q is not supported by Chat Completions", part.Type)
+			if message.Role != protocol.RoleUser {
+				return chatMessage{}, fmt.Errorf("audio input requires user role")
+			}
+			audio, err := encodeAudioPart(part.Media)
+			if err != nil {
+				return chatMessage{}, err
+			}
+			contentParts = append(contentParts, audio)
+		case protocol.ContentProvider:
+			block, err := decodeNativeBlock(part.Data)
+			if err != nil {
+				return chatMessage{}, err
+			}
+			contentParts = append(contentParts, block)
 		case protocol.ContentToolResult:
 			return chatMessage{}, fmt.Errorf("tool result must use role %q", protocol.RoleTool)
 		default:
@@ -415,4 +435,61 @@ func responseMetadata(providerName, id, model string, created int64) map[string]
 		metadata["created"] = fmt.Sprintf("%d", created)
 	}
 	return metadata
+}
+
+// encodeOutputFormat maps only explicit common options; ProviderOptions never
+// undergoes heuristic alias translation.
+func encodeOutputFormat(format *protocol.OutputFormat, responses bool) (map[string]any, error) {
+	switch format.Type {
+	case protocol.OutputText:
+		return map[string]any{"type": "text"}, nil
+	case protocol.OutputJSON:
+		return map[string]any{"type": "json_object"}, nil
+	case protocol.OutputJSONSchema:
+		if strings.TrimSpace(format.Name) == "" {
+			return nil, fmt.Errorf("JSON schema output requires a name")
+		}
+		schema, err := decodeNativeBlock(format.Schema)
+		if err != nil {
+			return nil, fmt.Errorf("output schema: %w", err)
+		}
+		definition := map[string]any{"name": format.Name, "schema": schema, "strict": format.Strict}
+		if responses {
+			definition["type"] = "json_schema"
+			return definition, nil
+		}
+		return map[string]any{"type": "json_schema", "json_schema": definition}, nil
+	default:
+		return nil, fmt.Errorf("unsupported output format %q", format.Type)
+	}
+}
+
+func decodeNativeBlock(raw json.RawMessage) (map[string]any, error) {
+	var block map[string]any
+	if err := json.Unmarshal(raw, &block); err != nil {
+		return nil, err
+	}
+	if block == nil {
+		return nil, fmt.Errorf("native block must be a JSON object")
+	}
+	return block, nil
+}
+
+func encodeAudioPart(media *protocol.MediaContent) (map[string]any, error) {
+	if media == nil || media.Data == "" {
+		return nil, fmt.Errorf("audio input requires inline base64 data")
+	}
+	if _, err := base64.StdEncoding.DecodeString(media.Data); err != nil {
+		return nil, fmt.Errorf("invalid audio base64: %w", err)
+	}
+	format := ""
+	switch media.MIMEType {
+	case "audio/wav", "audio/x-wav":
+		format = "wav"
+	case "audio/mpeg", "audio/mp3":
+		format = "mp3"
+	default:
+		return nil, fmt.Errorf("audio MIME type %q is unsupported; use wav or mp3", media.MIMEType)
+	}
+	return map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": media.Data, "format": format}}, nil
 }

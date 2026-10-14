@@ -59,7 +59,7 @@ func TestProviderGenerateMapsRequestAndResponse(t *testing.T) {
 		Tools: []protocol.ToolDefinition{{
 			Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`),
 		}},
-		ProviderOptions: map[string]any{"reasoning_effort": "high"},
+		Reasoning: &protocol.ReasoningOptions{Effort: "high"},
 	})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
@@ -110,7 +110,7 @@ func TestResponsesProviderGenerateMapsRequestAndResponse(t *testing.T) {
 		}, nil
 	})}
 
-	provider, err := New(Config{BaseURL: "https://example.com/v1", APIKey: "token", APIType: ResponsesAPI, HTTPClient: client})
+	provider, err := New(Config{BaseURL: "https://example.com/v1", APIKey: "token", APIType: APITypeResponsesAPI, HTTPClient: client})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -137,23 +137,14 @@ func TestResponsesProviderGenerateMapsRequestAndResponse(t *testing.T) {
 	}
 }
 
-func TestResponsesRequestMapsDisabledThinkingToNoReasoning(t *testing.T) {
-	payload, err := buildResponsesRequest(protocol.ModelRequest{
-		Model:    "model-1",
-		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
-		ProviderOptions: map[string]any{
-			"thinking": map[string]any{"type": "disabled"},
-		},
-	}, false)
+func TestResponsesRequestMapsExplicitReasoning(t *testing.T) {
+	payload, err := buildResponsesRequest(protocol.ModelRequest{Model: "m", Reasoning: &protocol.ReasoningOptions{Effort: "none"}}, false)
 	if err != nil {
-		t.Fatalf("build request: %v", err)
+		t.Fatal(err)
 	}
 	reasoning, ok := payload["reasoning"].(map[string]any)
 	if !ok || reasoning["effort"] != "none" {
-		t.Fatalf("reasoning = %#v", payload["reasoning"])
-	}
-	if _, exists := payload["thinking"]; exists {
-		t.Fatalf("thinking should be translated, payload = %#v", payload)
+		t.Fatalf("payload=%#v", payload)
 	}
 }
 
@@ -186,7 +177,7 @@ func TestResponsesProviderStreamAccumulatesTypedEvents(t *testing.T) {
 		}, nil
 	})}
 
-	provider, err := New(Config{BaseURL: "https://example.com/v1", APIType: ResponsesAPI, HTTPClient: client})
+	provider, err := New(Config{BaseURL: "https://example.com/v1", APIType: APITypeResponsesAPI, HTTPClient: client})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -200,7 +191,7 @@ func TestResponsesProviderStreamAccumulatesTypedEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stream: %v", err)
 	}
-	if response.Message.Text() != "Hel" {
+	if response.Message.Text() != "Hello" {
 		t.Fatalf("message text = %q", response.Message.Text())
 	}
 	calls := response.Message.ToolCalls()
@@ -212,7 +203,7 @@ func TestResponsesProviderStreamAccumulatesTypedEvents(t *testing.T) {
 	}
 	wantEvents := []protocol.StreamEventType{
 		protocol.EventTextDelta, protocol.EventToolCallDelta, protocol.EventToolCallDelta,
-		protocol.EventToolCallDelta, protocol.EventUsage,
+		protocol.EventToolCallDelta, protocol.EventTextDelta, protocol.EventUsage, protocol.EventFinish,
 	}
 	if !reflect.DeepEqual(events, wantEvents) {
 		t.Fatalf("events = %#v, want %#v", events, wantEvents)
@@ -270,7 +261,7 @@ func TestProviderStreamAccumulatesTextReasoningAndToolCallDeltas(t *testing.T) {
 	wantEvents := []protocol.StreamEventType{
 		protocol.EventTextDelta, protocol.EventReasoningDelta,
 		protocol.EventTextDelta, protocol.EventReasoningDelta, protocol.EventToolCallDelta,
-		protocol.EventToolCallDelta, protocol.EventUsage,
+		protocol.EventToolCallDelta, protocol.EventUsage, protocol.EventFinish,
 	}
 	if !reflect.DeepEqual(events, wantEvents) {
 		t.Fatalf("events = %#v, want %#v", events, wantEvents)
@@ -288,19 +279,14 @@ func TestBuildRequestRejectsProviderOptionThatOverridesCommonField(t *testing.T)
 	}
 }
 
-func TestBuildRequestPreservesExtraBodyThinkingOption(t *testing.T) {
-	extraBody := map[string]any{"thinking": map[string]any{"type": "enabled"}}
-	payload, err := buildRequest(protocol.ModelRequest{
-		Model:           "model-1",
-		Messages:        []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
-		ProviderOptions: map[string]any{"extra_body": extraBody},
-	}, false)
+func TestBuildRequestPreservesNativeThinkingOption(t *testing.T) {
+	thinking := map[string]any{"type": "enabled"}
+	payload, err := buildRequest(protocol.ModelRequest{Model: "m", ProviderOptions: map[string]any{"thinking": thinking}}, false)
 	if err != nil {
-		t.Fatalf("build request: %v", err)
+		t.Fatal(err)
 	}
-	got, ok := payload["extra_body"].(map[string]any)
-	if !ok || got["thinking"] == nil {
-		t.Fatalf("extra_body = %#v", payload["extra_body"])
+	if !reflect.DeepEqual(payload["thinking"], thinking) {
+		t.Fatalf("payload=%#v", payload)
 	}
 }
 
@@ -308,7 +294,7 @@ func TestProviderStreamRequiresDoneMarker(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}`))}, nil
 	})}
-	provider, err := New(Config{BaseURL: "https://example.com/v1", HTTPClient: client, MaxRetries: -1})
+	provider, err := New(Config{BaseURL: "https://example.com/v1", HTTPClient: client})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +313,7 @@ func TestProviderRetriesTransientStatus(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))}, nil
 	})}
-	provider, err := New(Config{BaseURL: "https://example.com/v1", HTTPClient: client, MaxRetries: 2, RetryBackoff: time.Nanosecond})
+	provider, err := New(Config{BaseURL: "https://example.com/v1", HTTPClient: client, Retry: RetryPolicy{MaxRetries: 2, Backoff: time.Nanosecond}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +327,7 @@ func TestProviderRejectsOversizedResponse(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", 100)))}, nil
 	})}
-	provider, err := New(Config{BaseURL: "https://example.com/v1", HTTPClient: client, MaxResponseBytes: 32, MaxRetries: -1})
+	provider, err := New(Config{BaseURL: "https://example.com/v1", HTTPClient: client, MaxResponseBytes: 32})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,12 +29,12 @@ func (provider *scriptedProvider) Generate(_ context.Context, request protocol.M
 func TestClientGenerateHooksSurroundProviderCall(t *testing.T) {
 	var lifecycle []string
 	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "ok")}}}
-	client := NewClient(provider, Hooks{
-		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
+	client := NewClient(provider, protocol.Hooks{
+		OnRequest: []protocol.RequestHook{func(_ context.Context, _ protocol.RequestInfo) error {
 			lifecycle = append(lifecycle, "request")
 			return nil
 		}},
-		OnResponse: []ResponseHook{func(_ context.Context, info ResponseInfo) error {
+		OnResponse: []protocol.ResponseHook{func(_ context.Context, info protocol.ResponseInfo) error {
 			if info.Error != nil {
 				t.Fatalf("unexpected response error: %v", info.Error)
 			}
@@ -64,12 +64,12 @@ func TestClientHooksShareRequestAndRequestID(t *testing.T) {
 	}}}
 	var requestIDFromRequest, requestIDFromResponse string
 	var responseRequest protocol.ModelRequest
-	client := NewClient(provider, Hooks{
-		OnRequest: []RequestHook{func(_ context.Context, info RequestInfo) error {
+	client := NewClient(provider, protocol.Hooks{
+		OnRequest: []protocol.RequestHook{func(_ context.Context, info protocol.RequestInfo) error {
 			requestIDFromRequest = info.RequestID
 			return nil
 		}},
-		OnResponse: []ResponseHook{func(_ context.Context, info ResponseInfo) error {
+		OnResponse: []protocol.ResponseHook{func(_ context.Context, info protocol.ResponseInfo) error {
 			requestIDFromResponse = info.RequestID
 			responseRequest = info.Request
 			return nil
@@ -78,7 +78,7 @@ func TestClientHooksShareRequestAndRequestID(t *testing.T) {
 	request := protocol.ModelRequest{
 		Model:    "model",
 		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hello")},
-		Metadata: map[string]string{RequestIDMetadataKey: "req_test_123"},
+		Metadata: map[string]string{protocol.RequestIDMetadataKey: "req_test_123"},
 	}
 	if _, err := client.Generate(context.Background(), request); err != nil {
 		t.Fatal(err)
@@ -86,15 +86,15 @@ func TestClientHooksShareRequestAndRequestID(t *testing.T) {
 	if requestIDFromRequest != "req_test_123" || requestIDFromResponse != requestIDFromRequest {
 		t.Fatalf("request IDs request=%q response=%q", requestIDFromRequest, requestIDFromResponse)
 	}
-	if responseRequest.Model != request.Model || len(responseRequest.Messages) != 1 || responseRequest.Metadata[RequestIDMetadataKey] != "req_test_123" {
+	if responseRequest.Model != request.Model || len(responseRequest.Messages) != 1 || responseRequest.Metadata[protocol.RequestIDMetadataKey] != "req_test_123" {
 		t.Fatalf("response request=%#v", responseRequest)
 	}
 }
 
 func TestClientGenerateRequestHookErrorSkipsProviderCall(t *testing.T) {
 	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "ok")}}}
-	client := NewClient(provider, Hooks{
-		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
+	client := NewClient(provider, protocol.Hooks{
+		OnRequest: []protocol.RequestHook{func(_ context.Context, _ protocol.RequestInfo) error {
 			return errors.New("blocked")
 		}},
 	})
@@ -114,8 +114,8 @@ func TestClientGenerateRequestHookErrorSkipsProviderCall(t *testing.T) {
 func TestClientGenerateResponseHookObservesProviderError(t *testing.T) {
 	provider := &scriptedProvider{}
 	var observedErr error
-	client := NewClient(provider, Hooks{
-		OnResponse: []ResponseHook{func(_ context.Context, info ResponseInfo) error {
+	client := NewClient(provider, protocol.Hooks{
+		OnResponse: []protocol.ResponseHook{func(_ context.Context, info protocol.ResponseInfo) error {
 			observedErr = info.Error
 			return nil
 		}},
@@ -136,8 +136,8 @@ func TestClientGenerateResponseHookObservesProviderError(t *testing.T) {
 func TestClientStreamRejectsProviderWithoutStreaming(t *testing.T) {
 	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "ok")}}}
 	hookCalled := false
-	client := NewClient(provider, Hooks{
-		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
+	client := NewClient(provider, protocol.Hooks{
+		OnRequest: []protocol.RequestHook{func(_ context.Context, _ protocol.RequestInfo) error {
 			hookCalled = true
 			return nil
 		}},
@@ -149,8 +149,9 @@ func TestClientStreamRejectsProviderWithoutStreaming(t *testing.T) {
 		t.Fatal("sink should not receive events")
 		return nil
 	}))
-	if !errors.Is(err, ErrStreamingNotSupported) {
-		t.Fatalf("err = %v, want ErrStreamingNotSupported", err)
+	var failure *protocol.Error
+	if !errors.As(err, &failure) || failure.Code != protocol.ErrorUnsupported {
+		t.Fatalf("err = %v, want unsupported", err)
 	}
 	if hookCalled {
 		t.Fatal("request hook should not run when streaming is unsupported")
@@ -170,7 +171,7 @@ func TestClientStreamUsesProviderStreamMethod(t *testing.T) {
 			return protocol.ModelResponse{Message: protocol.TextMessage(protocol.RoleAssistant, "hi")}, nil
 		},
 	}
-	client := NewClient(provider, Hooks{})
+	client := NewClient(provider, protocol.Hooks{})
 
 	var deltas []string
 	_, err := client.Stream(context.Background(), protocol.ModelRequest{
@@ -202,7 +203,7 @@ func (provider *streamingScriptedProvider) Stream(ctx context.Context, request p
 }
 
 func TestClientGenerateRequiresProvider(t *testing.T) {
-	client := NewClient(nil, Hooks{})
+	client := NewClient(nil, protocol.Hooks{})
 	_, err := client.Generate(context.Background(), protocol.ModelRequest{Model: "model"})
 	if err == nil {
 		t.Fatalf("expected error for nil provider")
@@ -211,8 +212,8 @@ func TestClientGenerateRequiresProvider(t *testing.T) {
 
 func TestClientGenerateHookPanicPropagates(t *testing.T) {
 	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "ok")}}}
-	client := NewClient(provider, Hooks{
-		OnRequest: []RequestHook{func(_ context.Context, _ RequestInfo) error {
+	client := NewClient(provider, protocol.Hooks{
+		OnRequest: []protocol.RequestHook{func(_ context.Context, _ protocol.RequestInfo) error {
 			panic("boom")
 		}},
 	})
@@ -233,4 +234,44 @@ func TestClientGenerateHookPanicPropagates(t *testing.T) {
 		Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")},
 	})
 	t.Fatal("expected hook panic to propagate")
+}
+
+func TestClientHooksCannotMutateCallOrOtherObservers(t *testing.T) {
+	provider := &scriptedProvider{responses: []protocol.ModelResponse{{Message: protocol.TextMessage(protocol.RoleAssistant, "original"), CallInfo: protocol.CallInfo{Attempts: 3, Headers: map[string][]string{"X-Test": {"original"}}}}}}
+	hooks := protocol.Hooks{
+		OnRequest: []protocol.RequestHook{
+			func(_ context.Context, info protocol.RequestInfo) error {
+				info.Request.Messages[0].Parts[0].Text = "changed"
+				info.Request.ProviderOptions["nested"].(map[string]any)["value"] = "changed"
+				return nil
+			},
+			func(_ context.Context, info protocol.RequestInfo) error {
+				if info.Request.Messages[0].Text() != "hi" || info.Request.ProviderOptions["nested"].(map[string]any)["value"] != "original" {
+					t.Fatal("observer mutated request")
+				}
+				return nil
+			},
+		},
+		OnResponse: []protocol.ResponseHook{
+			func(_ context.Context, info protocol.ResponseInfo) error {
+				info.Response.Message.Parts[0].Text = "changed"
+				info.Response.CallInfo.Headers["X-Test"][0] = "changed"
+				return nil
+			},
+			func(_ context.Context, info protocol.ResponseInfo) error {
+				if info.Response.Message.Text() != "original" || info.Response.CallInfo.Attempts != 3 || info.Response.CallInfo.Headers["X-Test"][0] != "original" {
+					t.Fatal("observer mutated response")
+				}
+				return nil
+			},
+		},
+	}
+	client := NewClient(provider, hooks)
+	// Client configuration also owns its callback slices.
+	hooks.OnRequest[1] = func(context.Context, protocol.RequestInfo) error { t.Fatal("hook slice remained shared"); return nil }
+	request := protocol.ModelRequest{Model: "m", Messages: []protocol.Message{protocol.TextMessage(protocol.RoleUser, "hi")}, ProviderOptions: map[string]any{"nested": map[string]any{"value": "original"}}}
+	response, err := client.Generate(context.Background(), request)
+	if err != nil || response.Message.Text() != "original" || provider.requests[0].Messages[0].Text() != "hi" {
+		t.Fatalf("response=%#v err=%v", response, err)
+	}
 }
