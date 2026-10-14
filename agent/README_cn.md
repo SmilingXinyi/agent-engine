@@ -43,6 +43,10 @@ func main() {
 
 历史中的工具调用必须由 assistant 发起，并有 ID、名称匹配的 tool 结果；整批结果完成后才能出现下一条对话消息。孤立结果、重复结果、缺失结果、错误角色和 nil 工具内容会在调用模型前被拒绝。Agent 不裁剪历史、不提取或覆盖其中的 system 消息。失败或 MaxSteps 返回的部分记录可能包含未完成工具批次，调用方不能直接把它当作完整历史重放。
 
+## Skill 工具
+
+调用方使用 [`agent-skill`](../agent-skill/README_cn.md) 的 `Load`、`BuildListing` 和 `NewTool`，将目录拼入 SystemPrompt，将 get_skill 加入 Tools。Agent 不依赖 Skill 模块，也不自动按关键词选择技能。
+
 ## MCP 工具
 
 使用独立的 [`mcp-runtime`](../mcp-runtime/README_cn.md) 模块连接 MCP 服务器，将 `runtime.Tools` 传入 `Request.Tools`。Agent 不依赖 MCP SDK，也可以接收自行定义的 `ai-tool-loop/protocol.Tool`。
