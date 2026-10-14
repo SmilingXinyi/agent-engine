@@ -1,8 +1,10 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -173,5 +175,177 @@ func TestInvalidRequestsAndPendingResultsRemainIncomplete(t *testing.T) {
 		if response.Complete {
 			t.Fatalf("pending response completed: %#v", response)
 		}
+	}
+}
+
+func TestMessageProviderOptionsReachBothCallModesAndAPIs(t *testing.T) {
+	for _, api := range []APIType{APITypeChatCompletions, APITypeResponsesAPI} {
+		for _, streaming := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", api, streaming), func(t *testing.T) {
+				provider := testProvider(t, Config{APIType: api}, func(request *http.Request) (*http.Response, error) {
+					var payload map[string]any
+					if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+						t.Fatal(err)
+					}
+					key := "messages"
+					if api == APITypeResponsesAPI {
+						key = "input"
+					}
+					messages := payload[key].([]any)
+					message := messages[0].(map[string]any)
+					if message["vendor_extension"].(map[string]any)["enabled"] != true || message["role"] != "user" || message["provider_options"] != nil || payload["vendor_extension"] != nil {
+						t.Fatalf("wrong extension placement: %#v", payload)
+					}
+					if messages[1].(map[string]any)["vendor_extension"] != nil {
+						t.Fatal("extension leaked to another message")
+					}
+					if api == APITypeResponsesAPI {
+						result := `{"status":"completed","output":[{"type":"message","role":"assistant","vendor_output":"opaque","content":[{"type":"output_text","text":"ok"}]}]}`
+						if streaming {
+							return testHTTPResponse(200, "data: {\"type\":\"response.completed\",\"response\":"+result+"}\n\n"), nil
+						}
+						return testHTTPResponse(200, result), nil
+					}
+					if streaming {
+						return testHTTPResponse(200, finalChat), nil
+					}
+					return testHTTPResponse(200, `{"choices":[{"message":{"content":"ok","vendor_output":"opaque"},"finish_reason":"stop"}]}`), nil
+				})
+				request := testRequest()
+				request.Messages[0].ProviderOptions = map[string]any{"vendor_extension": map[string]any{"enabled": true}}
+				request.Messages = append(request.Messages, protocol.TextMessage(protocol.RoleUser, "another"))
+				var response protocol.ModelResponse
+				var err error
+				if streaming {
+					response, err = provider.Stream(context.Background(), request, nil)
+				} else {
+					response, err = provider.Generate(context.Background(), request)
+				}
+				if err != nil || !response.Complete || response.Message.Text() != "ok" {
+					t.Fatalf("response=%#v err=%v", response, err)
+				}
+				if len(response.Message.ProviderOptions) > 0 {
+					t.Fatal("native output became input options")
+				}
+				if !streaming && !bytes.Contains(response.Raw, []byte(`"vendor_output":"opaque"`)) {
+					t.Fatal("native output was not preserved separately")
+				}
+			})
+		}
+	}
+}
+
+func TestMessageOptionsCannotOverrideCommonFields(t *testing.T) {
+	for _, test := range []struct {
+		api  APIType
+		keys []string
+	}{
+		{APITypeChatCompletions, []string{"role", "name", "content", "reasoning_content", "tool_calls", "tool_call_id"}},
+		{APITypeResponsesAPI, []string{"type", "role", "name", "content", "call_id", "output", "arguments"}},
+	} {
+		for _, key := range test.keys {
+			t.Run(string(test.api)+"/"+key, func(t *testing.T) {
+				provider := testProvider(t, Config{APIType: test.api}, func(*http.Request) (*http.Response, error) { t.Fatal("conflicting extension sent"); return nil, nil })
+				request := testRequest()
+				request.Messages[0].ProviderOptions = map[string]any{key: "override"}
+				response, err := provider.Generate(context.Background(), request)
+				requireFailure(t, err, protocol.ErrorInvalidRequest)
+				if response.CallInfo.Attempts != 0 {
+					t.Fatalf("response=%#v", response)
+				}
+			})
+		}
+	}
+}
+
+func TestResponsesRejectsMessageOptionsWithoutUniqueTarget(t *testing.T) {
+	tool := protocol.ToolResult{ToolCallID: "call", Content: []protocol.ContentPart{{Type: protocol.ContentText, Text: "ok"}}}
+	call := protocol.ToolCall{ID: "call", Name: "lookup", Arguments: json.RawMessage(`{}`)}
+	for _, message := range []protocol.Message{
+		protocol.TextMessage(protocol.RoleSystem, "instructions"),
+		protocol.TextMessage(protocol.RoleDeveloper, "instructions"),
+		{Role: protocol.RoleUser},
+		{Role: protocol.RoleAssistant, Parts: []protocol.ContentPart{{Type: protocol.ContentReasoning, Text: "summary"}}},
+		{Role: protocol.RoleAssistant, Parts: []protocol.ContentPart{{Type: protocol.ContentToolCall, ToolCall: &call}}},
+		{Role: protocol.RoleTool, Parts: []protocol.ContentPart{{Type: protocol.ContentToolResult, ToolResult: &tool}, {Type: protocol.ContentToolResult, ToolResult: &tool}}},
+	} {
+		provider := testProvider(t, Config{APIType: APITypeResponsesAPI}, func(*http.Request) (*http.Response, error) { t.Fatal("unrepresentable message sent"); return nil, nil })
+		message.ProviderOptions = map[string]any{"vendor_extension": true}
+		request := testRequest()
+		request.Messages = []protocol.Message{message}
+		_, err := provider.Generate(context.Background(), request)
+		requireFailure(t, err, protocol.ErrorUnsupported)
+	}
+}
+
+func TestMessageOptionsOnToolResultsAndMixedAssistant(t *testing.T) {
+	tool := protocol.ToolResult{ToolCallID: "call", Content: []protocol.ContentPart{{Type: protocol.ContentText, Text: "result"}}}
+	call := protocol.ToolCall{ID: "call", Name: "lookup", Arguments: json.RawMessage(`{}`)}
+	for _, api := range []APIType{APITypeChatCompletions, APITypeResponsesAPI} {
+		provider, err := New(Config{BaseURL: "https://example.com/v1", APIType: api})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := testRequest()
+		request.Messages = []protocol.Message{
+			{Role: protocol.RoleAssistant, Parts: []protocol.ContentPart{{Type: protocol.ContentText, Text: "calling"}, {Type: protocol.ContentToolCall, ToolCall: &call}}, ProviderOptions: map[string]any{"vendor_extension": "assistant"}},
+			{Role: protocol.RoleTool, Parts: []protocol.ContentPart{{Type: protocol.ContentToolResult, ToolResult: &tool}}, ProviderOptions: map[string]any{"vendor_extension": "tool"}},
+		}
+		payload, err := provider.buildRequest(request, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		key := "messages"
+		toolIndex := 1
+		if api == APITypeResponsesAPI {
+			key = "input"
+			toolIndex = 2
+		}
+		messages := decoded[key].([]any)
+		if messages[0].(map[string]any)["vendor_extension"] != "assistant" || messages[toolIndex].(map[string]any)["vendor_extension"] != "tool" {
+			t.Fatalf("payload=%s", encoded)
+		}
+		if api == APITypeResponsesAPI && messages[1].(map[string]any)["vendor_extension"] != nil {
+			t.Fatal("message option leaked onto function call")
+		}
+		request.Messages = []protocol.Message{{Role: protocol.RoleTool, ProviderOptions: map[string]any{"vendor_extension": true}, Parts: []protocol.ContentPart{{Type: protocol.ContentToolResult, ToolResult: &tool}, {Type: protocol.ContentToolResult, ToolResult: &tool}}}}
+		_, err = provider.buildRequest(request, false)
+		requireFailure(t, err, protocol.ErrorUnsupported)
+	}
+}
+
+func TestChatMessageOptionsSupportAllMessageRoles(t *testing.T) {
+	for _, role := range []protocol.Role{protocol.RoleSystem, protocol.RoleDeveloper, protocol.RoleUser, protocol.RoleAssistant} {
+		message := protocol.TextMessage(role, "text")
+		message.ProviderOptions = map[string]any{"vendor_extension": json.RawMessage(`{"integer":9007199254740993}`)}
+		encoded, err := encodeMessage(message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, err := json.Marshal(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(wire, []byte(`"integer":9007199254740993`)) {
+			t.Fatalf("native number changed: %s", wire)
+		}
+	}
+}
+
+func TestNonJSONMessageOptionFailsBeforeSending(t *testing.T) {
+	for _, api := range []APIType{APITypeChatCompletions, APITypeResponsesAPI} {
+		provider := testProvider(t, Config{APIType: api}, func(*http.Request) (*http.Response, error) { t.Fatal("invalid option sent"); return nil, nil })
+		request := testRequest()
+		request.Messages[0].ProviderOptions = map[string]any{"vendor_extension": func() {}}
+		_, err := provider.Generate(context.Background(), request)
+		requireFailure(t, err, protocol.ErrorInvalidRequest)
 	}
 }

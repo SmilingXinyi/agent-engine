@@ -82,6 +82,9 @@ func buildResponsesRequest(request protocol.ModelRequest, stream bool) (map[stri
 	input := make([]any, 0, len(request.Messages))
 	for index, message := range request.Messages {
 		if message.Role == protocol.RoleSystem || message.Role == protocol.RoleDeveloper {
+			if len(message.ProviderOptions) > 0 {
+				return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: fmt.Sprintf("message %d provider options cannot be represented as Responses instructions; use DoNative", index)}
+			}
 			text, err := responsesMessageText(message)
 			if err != nil {
 				return nil, fmt.Errorf("encode message %d: %w", index, err)
@@ -149,10 +152,16 @@ func isReservedResponsesRequestField(key string) bool {
 }
 
 func encodeResponsesMessage(message protocol.Message) ([]map[string]any, error) {
+	if err := validateMessageOptions(message.ProviderOptions, "type", "role", "name", "content", "call_id", "output", "arguments"); err != nil {
+		return nil, err
+	}
 	if message.Role == protocol.RoleTool {
 		results := message.ToolResults()
 		if len(results) == 0 {
 			return nil, fmt.Errorf("tool message has no tool result")
+		}
+		if len(message.ProviderOptions) > 0 && len(results) != 1 {
+			return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "message provider options require exactly one tool result; split the message or use DoNative"}
 		}
 		items := make([]map[string]any, 0, len(results))
 		for _, result := range results {
@@ -160,9 +169,13 @@ func encodeResponsesMessage(message protocol.Message) ([]map[string]any, error) 
 			if err != nil {
 				return nil, err
 			}
-			items = append(items, map[string]any{
+			item := map[string]any{
 				"type": "function_call_output", "call_id": result.ToolCallID, "output": text,
-			})
+			}
+			for key, value := range message.ProviderOptions {
+				item[key] = value
+			}
+			items = append(items, item)
 		}
 		return items, nil
 	}
@@ -224,10 +237,17 @@ func encodeResponsesMessage(message protocol.Message) ([]map[string]any, error) 
 		}
 	}
 	items := make([]map[string]any, 0, 1+len(calls))
+	if len(content) == 0 && len(message.ProviderOptions) > 0 {
+		return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "message provider options require a Responses message content item; use DoNative for function-call extensions"}
+	}
 	if len(content) > 0 {
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"type": "message", "role": string(message.Role), "content": content,
-		})
+		}
+		for key, value := range message.ProviderOptions {
+			item[key] = value
+		}
+		items = append(items, item)
 	}
 	items = append(items, calls...)
 	return items, nil

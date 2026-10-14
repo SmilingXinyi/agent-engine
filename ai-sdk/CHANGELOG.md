@@ -1,10 +1,24 @@
 # Changelog
 
+## v0.2.1 — 2026-10-15 — message extension preservation
+
+- Add `Message.ProviderOptions` for explicit native message-level input fields in
+  normalized Generate and Stream calls. Chat Completions supports all message
+  roles; Responses merges fields into the corresponding message or single tool
+  result item without leaking them into function calls or other messages.
+- Reject reserved-field collisions with `ErrorInvalidRequest`. Return
+  `ErrorUnsupported` when there is no unique native target, including Responses
+  instructions, contentless/function-call-only messages and grouped tool results.
+- Add `Message.Clone` and copy nested message options in request, response and
+  lifecycle snapshots. Keep native response fields in Raw/raw stream events;
+  do not automatically replay response fields as request extensions.
+- Publish only Go submodule tags. The unprefixed `v0.2.0` tag has been removed;
+  `ai-sdk/v0.2.0` is unchanged, and this release uses `ai-sdk/v0.2.1`.
+
 ## v0.2.0 — 2026-10-15 — breaking redesign
 
 Only `ai-sdk` is refactored. Other workspace modules and external callers are not
-migrated in this change. The Go module release tag is `ai-sdk/v0.2.0`;
-`v0.2.0` identifies the same commit.
+migrated in this change. The Go module release tag is `ai-sdk/v0.2.0`.
 
 ### Public contract
 

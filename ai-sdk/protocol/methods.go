@@ -18,12 +18,19 @@ func (failure *Error) Error() string {
 
 func (failure *Error) Unwrap() error { return failure.Cause }
 
+// Clone copies a message's content and JSON-shaped input extensions.
+func (message Message) Clone() Message {
+	message.Parts = cloneContentParts(message.Parts)
+	message.Metadata = utils.CloneJSONMap(message.Metadata)
+	message.ProviderOptions = utils.CloneJSONMap(message.ProviderOptions)
+	return message
+}
+
 // Clone returns a snapshot including nested extension maps and raw JSON.
 func (request ModelRequest) Clone() ModelRequest {
 	request.Messages = append([]Message(nil), request.Messages...)
 	for index := range request.Messages {
-		request.Messages[index].Parts = cloneContentParts(request.Messages[index].Parts)
-		request.Messages[index].Metadata = utils.CloneJSONMap(request.Messages[index].Metadata)
+		request.Messages[index] = request.Messages[index].Clone()
 	}
 	request.Tools = append([]ToolDefinition(nil), request.Tools...)
 	for index := range request.Tools {
@@ -52,8 +59,7 @@ func (request ModelRequest) Clone() ModelRequest {
 }
 
 func (response ModelResponse) Clone() ModelResponse {
-	response.Message.Parts = cloneContentParts(response.Message.Parts)
-	response.Message.Metadata = utils.CloneJSONMap(response.Message.Metadata)
+	response.Message = response.Message.Clone()
 	response.Metadata = utils.CloneMap(response.Metadata)
 	response.Raw = append(json.RawMessage(nil), response.Raw...)
 	response.CallInfo = response.CallInfo.Clone()

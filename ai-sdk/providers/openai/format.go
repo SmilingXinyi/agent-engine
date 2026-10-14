@@ -16,6 +16,49 @@ type chatMessage struct {
 	ReasoningContent string         `json:"reasoning_content,omitempty"`
 	ToolCalls        []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	providerOptions  map[string]any
+}
+
+// MarshalJSON keeps native message fields outside the common wire fields.
+func (message chatMessage) MarshalJSON() ([]byte, error) {
+	if err := validateChatMessageOptions(message.providerOptions); err != nil {
+		return nil, err
+	}
+	type commonFields chatMessage
+	common, err := json.Marshal(commonFields(message))
+	if err != nil {
+		return nil, err
+	}
+	if len(message.providerOptions) == 0 {
+		return common, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(common, &fields); err != nil {
+		return nil, err
+	}
+	for key, value := range message.providerOptions {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("message provider option %q: %w", key, err)
+		}
+		fields[key] = encoded
+	}
+	return json.Marshal(fields)
+}
+
+func validateChatMessageOptions(options map[string]any) error {
+	return validateMessageOptions(options, "role", "name", "content", "reasoning_content", "tool_calls", "tool_call_id")
+}
+
+func validateMessageOptions(options map[string]any, reserved ...string) error {
+	for key := range options {
+		for _, common := range reserved {
+			if key == common {
+				return &protocol.Error{Code: protocol.ErrorInvalidRequest, Message: fmt.Sprintf("message provider option %q must use the common message field", key)}
+			}
+		}
+	}
+	return nil
 }
 
 type chatToolCall struct {
@@ -163,12 +206,15 @@ func encodeMessages(messages []protocol.Message) ([]chatMessage, error) {
 }
 
 func encodeMessage(message protocol.Message) (chatMessage, error) {
+	if err := validateChatMessageOptions(message.ProviderOptions); err != nil {
+		return chatMessage{}, err
+	}
 	switch message.Role {
 	case protocol.RoleSystem, protocol.RoleDeveloper, protocol.RoleUser, protocol.RoleAssistant:
 	default:
 		return chatMessage{}, fmt.Errorf("unsupported message role %q", message.Role)
 	}
-	encoded := chatMessage{Role: string(message.Role), Name: message.Name}
+	encoded := chatMessage{Role: string(message.Role), Name: message.Name, providerOptions: message.ProviderOptions}
 	var contentParts []map[string]any
 	var text strings.Builder
 	var reasoning strings.Builder
@@ -293,9 +339,15 @@ func encodeFilePart(media *protocol.MediaContent) (map[string]any, error) {
 }
 
 func encodeToolResults(message protocol.Message) ([]chatMessage, error) {
+	if err := validateChatMessageOptions(message.ProviderOptions); err != nil {
+		return nil, err
+	}
 	results := message.ToolResults()
 	if len(results) == 0 {
 		return nil, fmt.Errorf("tool message has no tool result")
+	}
+	if len(message.ProviderOptions) > 0 && len(results) != 1 {
+		return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "message provider options require exactly one tool result; split the message or use DoNative"}
 	}
 	messages := make([]chatMessage, 0, len(results))
 	for _, result := range results {
@@ -310,7 +362,7 @@ func encodeToolResults(message protocol.Message) ([]chatMessage, error) {
 			content.WriteString(part.Text)
 		}
 		messages = append(messages, chatMessage{
-			Role: "tool", ToolCallID: result.ToolCallID, Content: content.String(),
+			Role: "tool", ToolCallID: result.ToolCallID, Content: content.String(), providerOptions: message.ProviderOptions,
 		})
 	}
 	return messages, nil

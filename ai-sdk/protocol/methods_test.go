@@ -51,3 +51,22 @@ func TestResponseCloneIsolatesHeadersAndToolResults(t *testing.T) {
 		t.Fatalf("clone mutated source: %#v", response)
 	}
 }
+
+func TestMessageOptionsAreIsolatedInAllSnapshots(t *testing.T) {
+	original := TextMessage(RoleAssistant, "original")
+	original.ProviderOptions = map[string]any{"nested": map[string]any{"values": []any{json.RawMessage(`{"original":true}`)}}}
+	copies := []Message{
+		original.Clone(),
+		(ModelRequest{Messages: []Message{original}}).Clone().Messages[0],
+		(ModelResponse{Message: original}).Clone().Message,
+	}
+	for _, copy := range copies {
+		values := copy.ProviderOptions["nested"].(map[string]any)["values"].([]any)
+		values[0].(json.RawMessage)[0] = 'x'
+		values = append(values, "changed")
+		copy.ProviderOptions["nested"].(map[string]any)["values"] = values
+		if len(original.ProviderOptions["nested"].(map[string]any)["values"].([]any)) != 1 || !json.Valid(original.ProviderOptions["nested"].(map[string]any)["values"].([]any)[0].(json.RawMessage)) {
+			t.Fatal("message options remained shared")
+		}
+	}
+}

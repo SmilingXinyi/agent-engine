@@ -8,8 +8,8 @@
 
 要求 Go 1.25+，只有标准库依赖。
 
-使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.2.0` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.2.0`，Git 标签 `v0.2.0` 指向同一提交。
+使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.2.1` 固定版本。
+Go 子模块发布标签为 `ai-sdk/v0.2.1`，不使用仓库根目录的裸版本标签。
 本地开发可以在调用项目的 `go.work` 中引用此模块，或通过
 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
 
@@ -110,10 +110,43 @@ request := protocol.ModelRequest{
 要求填写字段，不自动改写为 `reasoning`。Python 等 SDK 的 `extra_body` 是封装参数，
 不能直接作为 HTTP 字段使用；本模块会拒绝它，请把其中的字段直接放到 `ProviderOptions`。
 
-统一返回值只表达一个模型结果。多个候选、厂商内置工具、加密推理项目以及顶层消息扩展
-等需要完整原生协议的场景使用 `DoNative`。未知原生内容块也可放在
+统一返回值只表达一个模型结果。多个候选、厂商内置工具、加密推理项目
+等需要完整原生协议的场景使用 `DoNative`。消息顶层扩展通过下文的
+`Message.ProviderOptions` 传递。未知原生内容块也可放在
 `ContentPart{Type: protocol.ContentProvider, Data: ...}` 中，其 JSON 对象按原样结构编码，
 不会变成可跨厂商复用的内容。
+
+## 消息级扩展字段
+
+`ModelRequest.ProviderOptions` 控制请求顶层字段；`Message.ProviderOptions` 控制某条
+原生消息对象的字段；`ContentProvider` 承载原生内容块。这三个层级不会相互合并。
+例如某个兼容服务支持消息级 `vendor_extension` 时，可以继续使用统一调用接口：
+
+```go
+message := protocol.TextMessage(protocol.RoleUser, "你好")
+message.ProviderOptions = map[string]any{
+    "vendor_extension": map[string]any{"enabled": true},
+}
+request := protocol.ModelRequest{Model: "your-model", Messages: []protocol.Message{message}}
+```
+
+实际字段由上游 API 决定，adapter 不猜测别名或保证跨厂商兼容。Generate 和 Stream
+使用相同编码。Chat Completions 合并到对应的 `messages[]` 对象，支持所有已定义角色；
+Responses 合并到对应的 `input[]` 消息对象，或单个 `function_call_output` 对象。
+assistant 同时包含文本和工具调用时，Responses 扩展只加到消息对象，不加到工具调用。
+
+- Chat Completions 保留 `role`、`name`、`content`、`reasoning_content`、`tool_calls`、
+  `tool_call_id` 给公共字段映射。Responses 保留 `type`、`role`、`name`、`content`、
+  `call_id`、`output`、`arguments`。使用扩展覆盖这些字段会被拒绝。
+- Responses 将 system/developer 消息转换成 `instructions`，无法表达消息级扩展；
+  此时返回 `ErrorUnsupported`，需要保留原生消息格式时使用 `DoNative`。
+- Responses 无内容的消息、只有工具调用的消息没有对应的原生 message 对象，带扩展时
+  返回 `ErrorUnsupported`。函数调用扩展属于另一种原生对象，可通过 `DoNative` 表达。
+- 一条工具消息含多个工具结果时，扩展没有唯一对应对象，返回 `ErrorUnsupported`；
+  可拆成每条一个工具结果的消息后分别配置。
+- 输入扩展按 JSON 形状深拷贝，生命周期回调修改它们不会改变调用或其他观察者。
+- 响应中的厂商原生字段仍保存在 `ModelResponse.Raw` 和 `OnRawEvent` 中，不会自动填入
+  `Message.ProviderOptions` 或在下一轮调用中回放。`Message.Metadata` 仍是本地信息。
 
 ## 流式调用和完成状态
 

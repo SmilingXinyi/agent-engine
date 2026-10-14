@@ -64,6 +64,12 @@ type Message struct {
 	Name     string         `json:"name,omitempty"`
 	Parts    []ContentPart  `json:"parts"`
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// ProviderOptions are native input fields on the corresponding message
+	// object, not on its content blocks or the top-level request. Providers must
+	// reject common-field collisions and mappings without an unambiguous target.
+	// Native response fields remain in ModelResponse.Raw or raw stream events;
+	// they are never automatically turned into these input options.
+	ProviderOptions map[string]any `json:"provider_options,omitempty"`
 }
 
 // ToolCall is a model-issued request to invoke a tool. It carries no
