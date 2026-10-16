@@ -8,10 +8,10 @@
 
 要求 Go 1.25+，只有标准库依赖。
 
-本分支描述准备中的 **v0.3.0（尚未发布）**，流式接口与已发布的 v0.2.1 不兼容。
-请通过调用项目的 `go.work` 或 `go.mod` 的 `replace` 引用本地 `ai-sdk` 测试新接口。
-Go 子模块发布标签使用 `ai-sdk/vX.Y.Z`，本轮不创建发布标签。
-已发布的 v0.2.1 仍使用旧 sink 接口，不能直接运行下文的新流式示例。
+使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.0` 固定版本。
+Go 子模块发布标签为 `ai-sdk/v0.3.0`。v0.3.0 的流式接口与 v0.2.1 不兼容，
+下文示例针对已发布的 pull reader。本地开发可以在调用项目的 `go.work` 中引用此模块，
+或通过 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
 
 - `protocol/types.go`：公共类型、接口和常量，包括错误、hooks 和能力说明。
 - `protocol/methods.go`：消息构造、结果提取、快照复制和错误链行为。
