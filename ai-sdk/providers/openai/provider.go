@@ -186,21 +186,9 @@ func (provider *Provider) Generate(ctx context.Context, request protocol.ModelRe
 // Chat performs one non-streaming Chat Completions call.
 // The returned object uses "object": "chat.completion" and keeps unknown fields.
 func (provider *Provider) Chat(ctx context.Context, request ChatRequest) (map[string]any, error) {
-	if provider.apiType != APITypeChatCompletions {
-		return nil, provider.failure(fmt.Errorf("Chat requires the Chat Completions API"), protocol.ErrorUnsupported, protocol.CallInfo{})
-	}
-	if request.Stream {
-		return nil, provider.failure(fmt.Errorf("Chat is non-streaming; use Stream for SSE"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
-	}
-	if strings.TrimSpace(request.Model) == "" {
-		return nil, provider.failure(fmt.Errorf("model is required"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
-	}
-	if request.Messages == nil {
-		return nil, provider.failure(fmt.Errorf("messages are required"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
-	}
-	body, err := json.Marshal(request.Payload())
+	body, err := provider.chatJSON(request, false)
 	if err != nil {
-		return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
+		return nil, err
 	}
 	bodyBytes, info, err := provider.postJSON(ctx, body, false)
 	if err != nil {
@@ -215,6 +203,41 @@ func (provider *Provider) Chat(ctx context.Context, request ChatRequest) (map[st
 		return nil, provider.failure(err, protocol.ErrorDecode, info)
 	}
 	return response, nil
+}
+
+// ChatStream sends one Chat Completions request with stream set to true.
+// Messages stay native objects. Next delivers the original SSE frames.
+func (provider *Provider) ChatStream(ctx context.Context, request ChatRequest) (protocol.Stream, error) {
+	body, err := provider.chatJSON(request, true)
+	if err != nil {
+		return nil, err
+	}
+	return provider.openSSE(ctx, body)
+}
+
+func (provider *Provider) chatJSON(request ChatRequest, stream bool) ([]byte, error) {
+	method := "Chat"
+	if stream {
+		method = "ChatStream"
+	}
+	if provider.apiType != APITypeChatCompletions {
+		return nil, provider.failure(fmt.Errorf("%s requires the Chat Completions API", method), protocol.ErrorUnsupported, protocol.CallInfo{})
+	}
+	if !stream && request.Stream {
+		return nil, provider.failure(fmt.Errorf("Chat is non-streaming; use ChatStream for SSE"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	if strings.TrimSpace(request.Model) == "" {
+		return nil, provider.failure(fmt.Errorf("model is required"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	if request.Messages == nil {
+		return nil, provider.failure(fmt.Errorf("messages are required"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	request.Stream = stream
+	body, err := json.Marshal(request.Payload())
+	if err != nil {
+		return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	return body, nil
 }
 
 func (provider *Provider) postJSON(ctx context.Context, body []byte, stream bool) ([]byte, protocol.CallInfo, error) {

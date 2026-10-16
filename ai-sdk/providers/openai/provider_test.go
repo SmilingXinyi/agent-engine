@@ -133,6 +133,52 @@ func TestChatReturnsChatCompletionObject(t *testing.T) {
 	}
 }
 
+func TestChatStreamSendsNativeMessages(t *testing.T) {
+	provider := testProvider(t, Config{}, func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Accept") != "text/event-stream" {
+			t.Errorf("accept = %q", request.Header.Get("Accept"))
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["stream"] != true || payload["stream_options"] != nil {
+			t.Fatalf("payload = %#v", payload)
+		}
+		message := payload["messages"].([]any)[0].(map[string]any)
+		if message["role"] != "user" || message["content"] != "hi" || message["vendor_extension"] != true {
+			t.Fatalf("message = %#v", message)
+		}
+		return testHTTPResponse(200, finalChat+"data: [DONE]\n\n"), nil
+	})
+	stream, err := provider.ChatStream(context.Background(), ChatRequest{
+		Model: "model-1",
+		Messages: []map[string]any{
+			{"role": "user", "content": "hi", "vendor_extension": true},
+		},
+		Options: map[string]any{"stream": false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var frames strings.Builder
+	for stream.Next() {
+		frames.Write(stream.Chunk().Frame)
+	}
+	if stream.Err() != nil || !stream.Info().Complete || !strings.Contains(frames.String(), "[DONE]") {
+		t.Fatalf("frames=%s info=%#v err=%v", frames.String(), stream.Info(), stream.Err())
+	}
+	responses, err := New(Config{BaseURL: "https://example.com/v1", APIType: APITypeResponsesAPI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = responses.ChatStream(context.Background(), ChatRequest{Model: "m", Messages: []map[string]any{{"role": "user"}}})
+	requireFailure(t, err, protocol.ErrorUnsupported)
+	_, err = provider.ChatStream(context.Background(), ChatRequest{Model: "m"})
+	requireFailure(t, err, protocol.ErrorInvalidRequest)
+}
+
 func TestProviderGenerateMapsRequestAndResponse(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Path != "/v1/chat/completions" {

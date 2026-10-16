@@ -8,9 +8,9 @@
 
 要求 Go 1.25+，只有标准库依赖。
 
-使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.5` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.3.5`。这一版新增 `Chat`，并删除 `DoNative`。
-流式接口仍是 v0.3.0 的 pull reader，与 v0.2.1 不兼容。本地开发可以在调用项目的
+使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.6` 固定版本。
+Go 子模块发布标签为 `ai-sdk/v0.3.6`。这一版新增 `ChatStream`，原生消息仍放在
+`ChatRequest.Messages`。`Chat` 继续负责非流式 `chat.completion`。本地开发可以在调用项目的
 `go.work` 中引用此模块，或通过 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
 
 - `protocol/types.go`：公共类型、接口和常量，包括错误、hooks 和能力说明。
@@ -229,9 +229,12 @@ return stream.Err()
 
 ## 原生 Chat Completions
 
-非流式原生请求使用 `Chat`。`ChatRequest.Messages` 是 `[]map[string]any`，返回值是
-`map[string]any`，`object` 为 `chat.completion`，未知字段保留。`Stream` 为 true 时拒绝；
-原始 SSE 仍使用上面的 `Stream`。
+原生消息使用 `ChatRequest`。`Messages` 是 `[]map[string]any`，不会和
+`protocol.ModelRequest` 的 `[]Message` 混在同一个字段里。
+
+`Chat` 是非流式调用，返回 `map[string]any`，`object` 为 `chat.completion`，未知字段保留。
+`ChatStream` 强制 `stream: true`，按原始 SSE 帧返回，用法与 `Stream` 的 reader 相同。
+两者都不注入 `stream_options`。`Chat` 在 `Stream` 为 true 时拒绝。
 
 ```go
 response, err := provider.Chat(ctx, openai.ChatRequest{
@@ -240,9 +243,16 @@ response, err := provider.Chat(ctx, openai.ChatRequest{
         {"role": "user", "content": "你好", "vendor_extension": true},
     },
 })
+
+stream, err := provider.ChatStream(ctx, openai.ChatRequest{
+    Model: "your-model",
+    Messages: []map[string]any{
+        {"role": "user", "content": "你好"},
+    },
+})
 ```
 
-`Generate` 仍返回统一的 `ModelResponse`。它的 `Raw` 保留上游原始响应 JSON，包括未知字段。
+`Generate` 和 `Stream` 仍使用 `protocol.ModelRequest`。`Generate` 的 `Raw` 保留上游原始响应 JSON，包括未知字段。
 
 ## 错误和观测
 

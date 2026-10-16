@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.6 — 2026-10-16 — native chat streams
+
+- Add `ChatStream`. It takes `ChatRequest` with `[]map[string]any` messages and
+  returns the original SSE frames. `protocol.ModelRequest.Messages` stays `[]Message`.
+  The Go module release tag is `ai-sdk/v0.3.6`.
+
 ## v0.3.5 — 2026-10-16 — native chat completions
 
 - Add `ChatRequest` and `Provider.Chat`. `Messages` is `[]map[string]any`.
