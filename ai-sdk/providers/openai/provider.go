@@ -1,5 +1,4 @@
-// Package openai implements Chat Completions and Responses model calls, with
-// an explicit native HTTP escape hatch for gateways and provider extensions.
+// Package openai implements Chat Completions and Responses model calls.
 package openai
 
 import (
@@ -69,16 +68,6 @@ type Config struct {
 	// RequireDone requires [DONE] for Chat Completions. Normally a finish_reason
 	// followed by clean EOF also completes the stream. It does not affect Responses.
 	RequireDone bool
-}
-
-// NativeResponse exposes the unnormalized final HTTP response, including non-2xx
-// responses. The caller owns Body and must close it. SDK-managed body limits
-// and stream parsing do not apply; callers control their own reading and limits.
-type NativeResponse struct {
-	StatusCode int
-	Headers    http.Header
-	Body       io.ReadCloser
-	Attempts   int
 }
 
 type Provider struct {
@@ -247,27 +236,6 @@ func (provider *Provider) postJSON(ctx context.Context, body []byte, stream bool
 	return bodyBytes, info, nil
 }
 
-// DoNative sends an exact JSON object to the configured API endpoint. It does
-// not inject model, stream or other fields. Retries follow Config.Retry; final
-// HTTP failures are returned as NativeResponse, not normalized SDK errors.
-func (provider *Provider) DoNative(ctx context.Context, body json.RawMessage) (*NativeResponse, error) {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(body, &object); err != nil || object == nil {
-		return nil, provider.failure(fmt.Errorf("native request must be a JSON object"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
-	}
-	var stream bool
-	if value, exists := object["stream"]; exists {
-		if err := json.Unmarshal(value, &stream); err != nil {
-			return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
-		}
-	}
-	response, info, err := provider.send(ctx, append([]byte(nil), body...), stream)
-	if err != nil {
-		return nil, err
-	}
-	return &NativeResponse{StatusCode: response.StatusCode, Headers: response.Header.Clone(), Body: response.Body, Attempts: info.Attempts}, nil
-}
-
 func (provider *Provider) endpoint() string {
 	suffix := "/chat/completions"
 	if provider.apiType == APITypeResponsesAPI {
@@ -299,7 +267,7 @@ func (provider *Provider) buildRequest(request protocol.ModelRequest, stream boo
 			return nil, fmt.Errorf("n must be an integer")
 		}
 		if count != 1 {
-			return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "normalized calls return one candidate; use DoNative for multiple candidates"}
+			return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "normalized calls return one candidate"}
 		}
 	}
 	if provider.apiType == APITypeResponsesAPI {

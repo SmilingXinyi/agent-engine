@@ -2,11 +2,9 @@ package openai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -135,33 +133,6 @@ func TestCanceledContextDoesNotSend(t *testing.T) {
 	failure := requireFailure(t, err, protocol.ErrorCanceled)
 	if !errors.Is(err, context.Canceled) || failure.CallInfo.Attempts != 0 || response.Complete {
 		t.Fatalf("response=%#v err=%v", response, err)
-	}
-}
-
-func TestNativeRequestAndResponseRemainUnnormalized(t *testing.T) {
-	for _, status := range []int{200, 429} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			requestBody := json.RawMessage("{\n  \"stream\": true, \"messages\": [{\"role\":\"developer\",\"vendor\":42}], \"vendor\": [1,2]\n}")
-			responseBody := ": keepalive\r\n\r\nevent: vendor\r\ndata: {\"unknown\":42}\r\n\r\ndata: [DONE]\r\n\r\n"
-			provider := testProvider(t, Config{}, func(request *http.Request) (*http.Response, error) {
-				actual, err := io.ReadAll(request.Body)
-				if err != nil || string(actual) != string(requestBody) || request.Header.Get("Accept") != "text/event-stream" {
-					t.Fatalf("native request changed: %s err=%v", actual, err)
-				}
-				response := testHTTPResponse(status, responseBody)
-				response.Header["X-Vendor"] = []string{"one", "two"}
-				return response, nil
-			})
-			response, err := provider.DoNative(context.Background(), requestBody)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer response.Body.Close()
-			actual, err := io.ReadAll(response.Body)
-			if err != nil || string(actual) != responseBody || response.StatusCode != status || response.Attempts != 1 || !reflect.DeepEqual(response.Headers["X-Vendor"], []string{"one", "two"}) {
-				t.Fatalf("response=%#v body=%q err=%v", response, actual, err)
-			}
-		})
 	}
 }
 

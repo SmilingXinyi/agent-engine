@@ -315,7 +315,7 @@ func encodeToolResults(message protocol.Message) ([]map[string]any, error) {
 		return nil, fmt.Errorf("tool message has no tool result")
 	}
 	if len(message.ProviderOptions) > 0 && len(results) != 1 {
-		return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "message provider options require exactly one tool result; split the message or use DoNative"}
+		return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "message provider options require exactly one tool result; split the message"}
 	}
 	messages := make([]map[string]any, 0, len(results))
 	for _, result := range results {

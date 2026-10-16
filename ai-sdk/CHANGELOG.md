@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Remove `DoNative` and `NativeResponse`. Non-streaming native Chat Completions
+  calls use `Chat` and return a `chat.completion` object.
+
 ## v0.3.0 — Unreleased — pull streams preserving original SSE frames
 
 Streaming changes are limited to ai-sdk. Workspace lifecycle callers now import

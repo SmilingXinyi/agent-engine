@@ -54,7 +54,7 @@ return stream.Err()
 
 Import `errors` for the example. There is no sink, producer goroutine, channel,
 semantic event splitting, or accumulated response. This release does not add a
-normalizer or collector. `Generate` and native HTTP `DoNative` remain available.
+normalizer or collector. `Generate` remains available for the normalized result.
 
 - Each successful `Next()` exposes one original SSE frame via `Chunk()`.
   `Frame` preserves exact bytes, including delimiters, comments, empty frames,
