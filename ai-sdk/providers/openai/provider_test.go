@@ -19,6 +19,120 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 	return function(request)
 }
 
+func TestChatRequestMessagesAreNativeObjects(t *testing.T) {
+	request, err := newChatRequest(protocol.ModelRequest{
+		Model: "model-1",
+		Messages: []protocol.Message{{
+			Role: protocol.RoleUser, Name: "ada",
+			Parts:           []protocol.ContentPart{{Type: protocol.ContentText, Text: "hi"}},
+			ProviderOptions: map[string]any{"vendor_extension": map[string]any{"enabled": true}},
+		}},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Messages) != 1 {
+		t.Fatalf("messages = %#v", request.Messages)
+	}
+	message := request.Messages[0]
+	if message["role"] != "user" || message["content"] != "hi" || message["name"] != "ada" {
+		t.Fatalf("message = %#v", message)
+	}
+	extension, ok := message["vendor_extension"].(map[string]any)
+	if !ok || extension["enabled"] != true {
+		t.Fatalf("extension = %#v", message["vendor_extension"])
+	}
+	payload := request.Payload()
+	encoded, err := json.Marshal(payload["messages"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var messages []map[string]any
+	if err := json.Unmarshal(encoded, &messages); err != nil || messages[0]["content"] != "hi" {
+		t.Fatalf("messages = %s err=%v", encoded, err)
+	}
+}
+
+func TestConvertChatCompletionKeepsTextToolCallsAndUsage(t *testing.T) {
+	response := map[string]any{
+		"id": "chatcmpl-1", "model": "model-1", "created": float64(123), "object": "chat.completion",
+		"choices": []any{map[string]any{
+			"finish_reason": "tool_calls",
+			"message": map[string]any{
+				"content":           []any{map[string]any{"type": "text", "text": "hello"}},
+				"reasoning_content": "think",
+				"tool_calls": []any{map[string]any{
+					"id": "call-1", "type": "function",
+					"function": map[string]any{"name": "lookup", "arguments": `{"q":"x"}`},
+				}},
+			},
+		}},
+		"usage": map[string]any{
+			"prompt_tokens": float64(3), "completion_tokens": float64(2), "total_tokens": float64(5),
+			"completion_tokens_details": map[string]any{"reasoning_tokens": float64(1)},
+		},
+	}
+	converted, err := convertChatCompletion(response, "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := converted.Message.ToolCalls()
+	if converted.Message.Text() != "hello" || converted.Message.Reasoning() != "think" || converted.FinishReason != protocol.FinishToolCalls || len(calls) != 1 || calls[0].Name != "lookup" || string(calls[0].Arguments) != `{"q":"x"}` || converted.Usage.ReasoningTokens != 1 || converted.Metadata["request_id"] != "chatcmpl-1" {
+		t.Fatalf("converted = %#v", converted)
+	}
+	if _, err := normalizeChatCompletion(map[string]any{"object": "chat.completion.chunk", "choices": []any{}}, true); err == nil {
+		t.Fatal("chunk object accepted as a non-streaming completion")
+	}
+}
+
+func TestChatReturnsChatCompletionObject(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var payload struct {
+			Stream   bool             `json:"stream"`
+			Messages []map[string]any `json:"messages"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if payload.Stream || payload.Messages[0]["content"] != "hi" {
+			t.Errorf("payload = %#v", payload)
+		}
+		body := `{
+			"id":"chatcmpl-1","model":"model-1","created":123,
+			"choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":1}},
+			"vendor":{"signed":"opaque"}
+		}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	provider, err := New(Config{BaseURL: "https://example.com/v1", HTTPClient: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := provider.Chat(context.Background(), ChatRequest{
+		Model:    "model-1",
+		Messages: []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response["object"] != "chat.completion" || response["id"] != "chatcmpl-1" {
+		t.Fatalf("response = %#v", response)
+	}
+	if response["vendor"].(map[string]any)["signed"] != "opaque" {
+		t.Fatalf("vendor dropped: %#v", response)
+	}
+	choices := response["choices"].([]any)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	if message["content"].([]any)[0].(map[string]any)["text"] != "hello" {
+		t.Fatalf("message = %#v", message)
+	}
+	_, err = provider.Chat(context.Background(), ChatRequest{Model: "model-1", Messages: []map[string]any{{"role": "user"}}, Stream: true})
+	if err == nil {
+		t.Fatal("streaming Chat was accepted")
+	}
+}
+
 func TestProviderGenerateMapsRequestAndResponse(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Path != "/v1/chat/completions" {
@@ -351,7 +465,7 @@ func TestEncodeToolResultsConcatenatesTextParts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 1 || messages[0].Content != "firstsecond" {
+	if len(messages) != 1 || messages[0]["role"] != "tool" || messages[0]["tool_call_id"] != "call-1" || messages[0]["content"] != "firstsecond" {
 		t.Fatalf("messages=%#v", messages)
 	}
 }

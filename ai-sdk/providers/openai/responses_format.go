@@ -9,8 +9,8 @@ import (
 	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
-// responsesUsage is deliberately separate from openAIUsage because the two
-// endpoints use different field names for the same accounting values.
+// responsesUsage uses the Responses field names. Chat Completions reports the
+// same accounting values as prompt_tokens and completion_tokens.
 type responsesUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
