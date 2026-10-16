@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.5 — 2026-10-16 — native chat completions
+
+- Add `ChatRequest` and `Provider.Chat`. `Messages` is `[]map[string]any`.
+  The non-streaming result is a `chat.completion` object and keeps unknown fields.
+- Remove `DoNative` and `NativeResponse`. Raw SSE remains on `Stream`.
+  The Go module release tag is `ai-sdk/v0.3.5`.
+
 ## v0.3.0 — 2026-10-16 — pull streams preserving original SSE frames
 
 Streaming changes are limited to ai-sdk. Workspace lifecycle callers now import

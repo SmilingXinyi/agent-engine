@@ -2,16 +2,16 @@
 
 `ai-sdk` 是独立 Go 模块，负责一次模型调用。`ModelRequest` 统一表达消息、工具和模型参数；
 `Generate` 返回统一结果，`Stream` 按原始 SSE 帧交付上游输出。它不执行工具，不管理历史，
-也不要求接入 agent 或 MCP。需要完整原生请求 JSON 时可使用 OpenAI provider 的 `DoNative`。
+也不要求接入 agent 或 MCP。Chat Completions 的非流式原生对象使用 `Chat`。
 
 ## 安装和模块边界
 
 要求 Go 1.25+，只有标准库依赖。
 
-使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.0` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.3.0`。v0.3.0 的流式接口与 v0.2.1 不兼容，
-下文示例针对已发布的 pull reader。本地开发可以在调用项目的 `go.work` 中引用此模块，
-或通过 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
+使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.5` 固定版本。
+Go 子模块发布标签为 `ai-sdk/v0.3.5`。这一版新增 `Chat`，并删除 `DoNative`。
+流式接口仍是 v0.3.0 的 pull reader，与 v0.2.1 不兼容。本地开发可以在调用项目的
+`go.work` 中引用此模块，或通过 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
 
 - `protocol/types.go`：公共类型、接口和常量，包括错误、hooks 和能力说明。
 - `protocol/methods.go`：消息构造、结果提取、快照复制和错误链行为。
@@ -93,8 +93,8 @@ request := protocol.ModelRequest{
 
 该片段需要 `encoding/json`。`OutputText`、`OutputJSON`、`OutputJSONSchema` 分别对应
 普通文本、JSON 对象和 JSON Schema。adapter 负责映射两种 API 的字段格式，实际模型
-是否支持这些选项仍由上游决定。Chat Completions 的输出 token 上限映射为 `max_tokens`；
-需要不同原生字段的服务可使用 `DoNative`。
+是否支持这些选项仍由上游决定。Chat Completions 的输出 token 上限映射为 `max_tokens`。
+其他原生顶层字段放在 `ProviderOptions`；需要直接传原生消息对象时使用 `Chat`。
 
 `ProviderOptions` 是**上游 HTTP JSON 顶层字段**，不做别名猜测或跨厂商转换。
 与公共字段冲突时返回 `ErrorInvalidRequest`。上游 `metadata` 可以放在这里；
@@ -122,8 +122,8 @@ request := protocol.ModelRequest{
 不能直接作为 HTTP 字段使用；本模块会拒绝它，请把其中的字段直接放到 `ProviderOptions`。
 
 `Generate` 的统一返回值只表达一个模型结果，`ModelRequest` 调用仍限制单个候选。
-多个候选、厂商内置工具、加密推理项目等无法通过公共请求表达的场景使用 `DoNative`。消息顶层扩展通过下文的
-`Message.ProviderOptions` 传递。未知原生内容块也可放在
+消息顶层扩展通过下文的 `Message.ProviderOptions` 传递。需要按原生消息对象调用
+Chat Completions 时使用 `Chat`。未知原生内容块也可放在
 `ContentPart{Type: protocol.ContentProvider, Data: ...}` 中，其 JSON 对象按原样结构编码，
 不会变成可跨厂商复用的内容。
 
@@ -150,9 +150,9 @@ assistant 同时包含文本和工具调用时，Responses 扩展只加到消息
   `tool_call_id` 给公共字段映射。Responses 保留 `type`、`role`、`name`、`content`、
   `call_id`、`output`、`arguments`。使用扩展覆盖这些字段会被拒绝。
 - Responses 将 system/developer 消息转换成 `instructions`，无法表达消息级扩展；
-  此时返回 `ErrorUnsupported`，需要保留原生消息格式时使用 `DoNative`。
+  此时返回 `ErrorUnsupported`。
 - Responses 无内容的消息、只有工具调用的消息没有对应的原生 message 对象，带扩展时
-  返回 `ErrorUnsupported`。函数调用扩展属于另一种原生对象，可通过 `DoNative` 表达。
+  返回 `ErrorUnsupported`。函数调用扩展没有对应的统一消息对象。
 - 一条工具消息含多个工具结果时，扩展没有唯一对应对象，返回 `ErrorUnsupported`；
   可拆成每条一个工具结果的消息后分别配置。
 - 输入扩展按 JSON 形状深拷贝，生命周期回调修改它们不会改变调用或其他观察者。
@@ -227,26 +227,22 @@ return stream.Err()
 - `Next()` 和 `Chunk()` 串行使用，`Close()` 可以从另一 goroutine 中断阻塞读取；context
   取消也可以中断读取。SDK 不自动重连或重放已经打开的成功响应。
 
-## 原生 HTTP
+## 原生 Chat Completions
 
-`DoNative` 仅用于完整原生请求 JSON：请求体字节不会重新编码或注入公共字段。
-使用统一请求并保留原始 SSE 时，直接调用上面的 `Stream` 即可。
+非流式原生请求使用 `Chat`。`ChatRequest.Messages` 是 `[]map[string]any`，返回值是
+`map[string]any`，`object` 为 `chat.completion`，未知字段保留。`Stream` 为 true 时拒绝；
+原始 SSE 仍使用上面的 `Stream`。
 
 ```go
-native, err := provider.DoNative(ctx, json.RawMessage(`{
-    "model":"your-model",
-    "stream":true,
-    "messages":[{"role":"user","content":"你好","vendor_extension":true}]
-}`))
-if err != nil { return err }
-defer native.Body.Close()
-_, err = io.Copy(writer, native.Body)
-return err
+response, err := provider.Chat(ctx, openai.ChatRequest{
+    Model: "your-model",
+    Messages: []map[string]any{
+        {"role": "user", "content": "你好", "vendor_extension": true},
+    },
+})
 ```
 
-该片段需导入 `encoding/json` 和 `io`。原生接口返回最终 HTTP 响应，包括非 2xx；
-调用方拥有响应体，必须关闭它，并自行决定读取限制与成功判定。它不进行 SSE 解析。
-非流式 `ModelResponse.Raw` 继续保留完整响应 JSON，包括未知字段。
+`Generate` 仍返回统一的 `ModelResponse`。它的 `Raw` 保留上游原始响应 JSON，包括未知字段。
 
 ## 错误和观测
 
@@ -310,5 +306,4 @@ HTTP 408、429、5xx 进行重试；永久错误及已取消的 context 不重�
 当前 OpenAI adapter 支持文本、图片、文件、工具请求、推理输出和原生内容块。
 Chat Completions 额外支持用户的内联 WAV/MP3 音频输入；Responses adapter 不支持
 统一音频输入。工具结果在统一接口中目前只支持文本。Responses 的 reasoning summary
-是输出摘要，不作为普通历史输入回放；完整原生 reasoning 项目通过 `DoNative` 处理。
-需要上游音频输出、富内容工具结果或未归一化的服务能力时，可使用原生接口。
+是输出摘要，不作为普通历史输入回放。上游音频输出和富内容工具结果不在统一接口中。

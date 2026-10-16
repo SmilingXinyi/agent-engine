@@ -1,5 +1,4 @@
-// Package openai implements Chat Completions and Responses model calls, with
-// an explicit native HTTP escape hatch for gateways and provider extensions.
+// Package openai implements Chat Completions and Responses model calls.
 package openai
 
 import (
@@ -69,16 +68,6 @@ type Config struct {
 	// RequireDone requires [DONE] for Chat Completions. Normally a finish_reason
 	// followed by clean EOF also completes the stream. It does not affect Responses.
 	RequireDone bool
-}
-
-// NativeResponse exposes the unnormalized final HTTP response, including non-2xx
-// responses. The caller owns Body and must close it. SDK-managed body limits
-// and stream parsing do not apply; callers control their own reading and limits.
-type NativeResponse struct {
-	StatusCode int
-	Headers    http.Header
-	Body       io.ReadCloser
-	Attempts   int
 }
 
 type Provider struct {
@@ -164,21 +153,10 @@ func (provider *Provider) Generate(ctx context.Context, request protocol.ModelRe
 	if err != nil {
 		return result, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
-	response, info, err := provider.send(ctx, body, false)
+	bodyBytes, info, err := provider.postJSON(ctx, body, false)
 	result.CallInfo = info
 	if err != nil {
 		return result, err
-	}
-	defer response.Body.Close()
-	if err = provider.validateHTTPResponse(response, info); err != nil {
-		return result, err
-	}
-	bodyBytes, err := io.ReadAll(io.LimitReader(response.Body, provider.maxResponseBytes+1))
-	if err != nil {
-		return result, provider.failure(err, protocol.ErrorTransport, info)
-	}
-	if int64(len(bodyBytes)) > provider.maxResponseBytes {
-		return result, provider.failure(fmt.Errorf("response exceeds %d bytes", provider.maxResponseBytes), protocol.ErrorResponseTooLarge, info)
 	}
 	if provider.apiType == APITypeResponsesAPI {
 		var decoded responsesResponse
@@ -186,9 +164,11 @@ func (provider *Provider) Generate(ctx context.Context, request protocol.ModelRe
 			result, err = convertResponsesResponse(decoded, provider.name)
 		}
 	} else {
-		var decoded chatResponse
-		if err = json.Unmarshal(bodyBytes, &decoded); err == nil {
-			result, err = convertResponse(decoded, provider.name)
+		var response map[string]any
+		if response, err = decodeJSONObject(bodyBytes); err == nil {
+			if response, err = normalizeChatCompletion(response, false); err == nil {
+				result, err = convertChatCompletion(response, provider.name)
+			}
 		}
 	}
 	result.CallInfo = info
@@ -203,25 +183,57 @@ func (provider *Provider) Generate(ctx context.Context, request protocol.ModelRe
 	return result, nil
 }
 
-// DoNative sends an exact JSON object to the configured API endpoint. It does
-// not inject model, stream or other fields. Retries follow Config.Retry; final
-// HTTP failures are returned as NativeResponse, not normalized SDK errors.
-func (provider *Provider) DoNative(ctx context.Context, body json.RawMessage) (*NativeResponse, error) {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(body, &object); err != nil || object == nil {
-		return nil, provider.failure(fmt.Errorf("native request must be a JSON object"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
+// Chat performs one non-streaming Chat Completions call.
+// The returned object uses "object": "chat.completion" and keeps unknown fields.
+func (provider *Provider) Chat(ctx context.Context, request ChatRequest) (map[string]any, error) {
+	if provider.apiType != APITypeChatCompletions {
+		return nil, provider.failure(fmt.Errorf("Chat requires the Chat Completions API"), protocol.ErrorUnsupported, protocol.CallInfo{})
 	}
-	var stream bool
-	if value, exists := object["stream"]; exists {
-		if err := json.Unmarshal(value, &stream); err != nil {
-			return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
-		}
+	if request.Stream {
+		return nil, provider.failure(fmt.Errorf("Chat is non-streaming; use Stream for SSE"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
-	response, info, err := provider.send(ctx, append([]byte(nil), body...), stream)
+	if strings.TrimSpace(request.Model) == "" {
+		return nil, provider.failure(fmt.Errorf("model is required"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	if request.Messages == nil {
+		return nil, provider.failure(fmt.Errorf("messages are required"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	body, err := json.Marshal(request.Payload())
+	if err != nil {
+		return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	bodyBytes, info, err := provider.postJSON(ctx, body, false)
 	if err != nil {
 		return nil, err
 	}
-	return &NativeResponse{StatusCode: response.StatusCode, Headers: response.Header.Clone(), Body: response.Body, Attempts: info.Attempts}, nil
+	response, err := decodeJSONObject(bodyBytes)
+	if err != nil {
+		return nil, provider.failure(err, protocol.ErrorDecode, info)
+	}
+	response, err = normalizeChatCompletion(response, true)
+	if err != nil {
+		return nil, provider.failure(err, protocol.ErrorDecode, info)
+	}
+	return response, nil
+}
+
+func (provider *Provider) postJSON(ctx context.Context, body []byte, stream bool) ([]byte, protocol.CallInfo, error) {
+	response, info, err := provider.send(ctx, body, stream)
+	if err != nil {
+		return nil, info, err
+	}
+	defer response.Body.Close()
+	if err = provider.validateHTTPResponse(response, info); err != nil {
+		return nil, info, err
+	}
+	bodyBytes, err := io.ReadAll(io.LimitReader(response.Body, provider.maxResponseBytes+1))
+	if err != nil {
+		return nil, info, provider.failure(err, protocol.ErrorTransport, info)
+	}
+	if int64(len(bodyBytes)) > provider.maxResponseBytes {
+		return nil, info, provider.failure(fmt.Errorf("response exceeds %d bytes", provider.maxResponseBytes), protocol.ErrorResponseTooLarge, info)
+	}
+	return bodyBytes, info, nil
 }
 
 func (provider *Provider) endpoint() string {
@@ -255,7 +267,7 @@ func (provider *Provider) buildRequest(request protocol.ModelRequest, stream boo
 			return nil, fmt.Errorf("n must be an integer")
 		}
 		if count != 1 {
-			return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "normalized calls return one candidate; use DoNative for multiple candidates"}
+			return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "normalized calls return one candidate"}
 		}
 	}
 	if provider.apiType == APITypeResponsesAPI {

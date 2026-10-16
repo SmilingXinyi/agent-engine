@@ -9,41 +9,27 @@ import (
 	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
-type chatMessage struct {
-	Role             string         `json:"role"`
-	Name             string         `json:"name,omitempty"`
-	Content          any            `json:"content,omitempty"`
-	ReasoningContent string         `json:"reasoning_content,omitempty"`
-	ToolCalls        []chatToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string         `json:"tool_call_id,omitempty"`
-	providerOptions  map[string]any
+// ChatRequest is one Chat Completions JSON body. Messages are native objects
+// so provider-specific message fields stay on the object instead of a fixed struct.
+type ChatRequest struct {
+	Model    string
+	Messages []map[string]any
+	Stream   bool
+	// Options holds the other top-level fields. model, messages, and stream
+	// always come from the struct fields above.
+	Options map[string]any
 }
 
-// MarshalJSON keeps native message fields outside the common wire fields.
-func (message chatMessage) MarshalJSON() ([]byte, error) {
-	if err := validateChatMessageOptions(message.providerOptions); err != nil {
-		return nil, err
+// Payload copies Options and then sets model, messages, and stream.
+func (request ChatRequest) Payload() map[string]any {
+	payload := make(map[string]any, len(request.Options)+3)
+	for key, value := range request.Options {
+		payload[key] = value
 	}
-	type commonFields chatMessage
-	common, err := json.Marshal(commonFields(message))
-	if err != nil {
-		return nil, err
-	}
-	if len(message.providerOptions) == 0 {
-		return common, nil
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(common, &fields); err != nil {
-		return nil, err
-	}
-	for key, value := range message.providerOptions {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("message provider option %q: %w", key, err)
-		}
-		fields[key] = encoded
-	}
-	return json.Marshal(fields)
+	payload["model"] = request.Model
+	payload["messages"] = request.Messages
+	payload["stream"] = request.Stream
+	return payload
 }
 
 func validateChatMessageOptions(options map[string]any) error {
@@ -61,95 +47,56 @@ func validateMessageOptions(options map[string]any, reserved ...string) error {
 	return nil
 }
 
-type chatToolCall struct {
-	Index    int          `json:"index,omitempty"`
-	ID       string       `json:"id,omitempty"`
-	Type     string       `json:"type,omitempty"`
-	Function chatFunction `json:"function"`
-}
-
-type chatFunction struct {
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
-}
-
-type responseMessage struct {
-	Role             string          `json:"role"`
-	Content          json.RawMessage `json:"content"`
-	ReasoningContent string          `json:"reasoning_content,omitempty"`
-	Reasoning        string          `json:"reasoning,omitempty"`
-	ToolCalls        []chatToolCall  `json:"tool_calls,omitempty"`
-}
-
-type chatResponse struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Created int64  `json:"created"`
-	Choices []struct {
-		Index        int             `json:"index"`
-		Message      responseMessage `json:"message"`
-		FinishReason string          `json:"finish_reason"`
-	} `json:"choices"`
-	Usage openAIUsage `json:"usage"`
-}
-
-type openAIUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	PromptDetails    struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-	CompletionDetails struct {
-		ReasoningTokens int `json:"reasoning_tokens"`
-	} `json:"completion_tokens_details"`
-}
-
 func buildRequest(request protocol.ModelRequest, stream bool) (map[string]any, error) {
-	messages, err := encodeMessages(request.Messages)
+	chatRequest, err := newChatRequest(request, stream)
 	if err != nil {
 		return nil, err
 	}
-	payload := make(map[string]any, len(request.ProviderOptions)+8)
+	return chatRequest.Payload(), nil
+}
+
+func newChatRequest(request protocol.ModelRequest, stream bool) (ChatRequest, error) {
+	messages, err := encodeMessages(request.Messages)
+	if err != nil {
+		return ChatRequest{}, err
+	}
+	options := make(map[string]any, len(request.ProviderOptions)+8)
 	for key, value := range request.ProviderOptions {
 		if isReservedRequestField(key) {
-			return nil, fmt.Errorf("provider option %q must use the common ModelRequest field", key)
+			return ChatRequest{}, fmt.Errorf("provider option %q must use the common ModelRequest field", key)
 		}
 		if key == "extra_body" {
-			return nil, fmt.Errorf("extra_body is an SDK wrapper; pass native fields directly in ProviderOptions")
+			return ChatRequest{}, fmt.Errorf("extra_body is an SDK wrapper; pass native fields directly in ProviderOptions")
 		}
-		payload[key] = value
+		options[key] = value
 	}
-	payload["model"] = request.Model
-	payload["messages"] = messages
-	payload["stream"] = stream
 	if stream {
-		if _, exists := payload["stream_options"]; !exists {
-			payload["stream_options"] = map[string]any{"include_usage": true}
+		if _, exists := options["stream_options"]; !exists {
+			options["stream_options"] = map[string]any{"include_usage": true}
 		}
 	}
 	if request.Reasoning != nil {
-		payload["reasoning_effort"] = request.Reasoning.Effort
+		options["reasoning_effort"] = request.Reasoning.Effort
 	}
 	if request.OutputFormat != nil {
 		format, err := encodeOutputFormat(request.OutputFormat, false)
 		if err != nil {
-			return nil, err
+			return ChatRequest{}, err
 		}
-		payload["response_format"] = format
+		options["response_format"] = format
 	}
 	if request.Temperature != nil {
-		payload["temperature"] = *request.Temperature
+		options["temperature"] = *request.Temperature
 	}
 	if request.MaxOutputTokens != nil {
-		payload["max_tokens"] = *request.MaxOutputTokens
+		options["max_tokens"] = *request.MaxOutputTokens
 	}
 	if len(request.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(request.Tools))
 		for _, tool := range request.Tools {
 			var parameters map[string]any
 			if err := json.Unmarshal(tool.InputSchema, &parameters); err != nil {
-				return nil, fmt.Errorf("encode tool %q schema: %w", tool.Name, err)
+				return ChatRequest{}, fmt.Errorf("encode tool %q schema: %w", tool.Name, err)
 			}
 			tools = append(tools, map[string]any{
 				"type": "function",
@@ -160,20 +107,20 @@ func buildRequest(request protocol.ModelRequest, stream bool) (map[string]any, e
 				},
 			})
 		}
-		payload["tools"] = tools
+		options["tools"] = tools
 	}
 	if request.ToolChoice != "" {
 		switch request.ToolChoice {
 		case protocol.ToolChoiceAuto, protocol.ToolChoiceNone, protocol.ToolChoiceRequired:
-			payload["tool_choice"] = string(request.ToolChoice)
+			options["tool_choice"] = string(request.ToolChoice)
 		default:
-			payload["tool_choice"] = map[string]any{
+			options["tool_choice"] = map[string]any{
 				"type":     "function",
 				"function": map[string]any{"name": string(request.ToolChoice)},
 			}
 		}
 	}
-	return payload, nil
+	return ChatRequest{Model: request.Model, Messages: messages, Stream: stream, Options: options}, nil
 }
 
 func isReservedRequestField(key string) bool {
@@ -185,8 +132,8 @@ func isReservedRequestField(key string) bool {
 	}
 }
 
-func encodeMessages(messages []protocol.Message) ([]chatMessage, error) {
-	result := make([]chatMessage, 0, len(messages))
+func encodeMessages(messages []protocol.Message) ([]map[string]any, error) {
+	result := make([]map[string]any, 0, len(messages))
 	for index, message := range messages {
 		if message.Role == protocol.RoleTool {
 			toolMessages, err := encodeToolResults(message)
@@ -205,19 +152,23 @@ func encodeMessages(messages []protocol.Message) ([]chatMessage, error) {
 	return result, nil
 }
 
-func encodeMessage(message protocol.Message) (chatMessage, error) {
+func encodeMessage(message protocol.Message) (map[string]any, error) {
 	if err := validateChatMessageOptions(message.ProviderOptions); err != nil {
-		return chatMessage{}, err
+		return nil, err
 	}
 	switch message.Role {
 	case protocol.RoleSystem, protocol.RoleDeveloper, protocol.RoleUser, protocol.RoleAssistant:
 	default:
-		return chatMessage{}, fmt.Errorf("unsupported message role %q", message.Role)
+		return nil, fmt.Errorf("unsupported message role %q", message.Role)
 	}
-	encoded := chatMessage{Role: string(message.Role), Name: message.Name, providerOptions: message.ProviderOptions}
+	encoded := map[string]any{"role": string(message.Role)}
+	if message.Name != "" {
+		encoded["name"] = message.Name
+	}
 	var contentParts []map[string]any
 	var text strings.Builder
 	var reasoning strings.Builder
+	var toolCalls []map[string]any
 	for _, part := range message.Parts {
 		switch part.Type {
 		case protocol.ContentText:
@@ -228,51 +179,68 @@ func encodeMessage(message protocol.Message) (chatMessage, error) {
 		case protocol.ContentImage:
 			imagePart, err := encodeImagePart(part.Media)
 			if err != nil {
-				return chatMessage{}, err
+				return nil, err
 			}
 			contentParts = append(contentParts, imagePart)
 		case protocol.ContentFile:
 			filePart, err := encodeFilePart(part.Media)
 			if err != nil {
-				return chatMessage{}, err
+				return nil, err
 			}
 			contentParts = append(contentParts, filePart)
 		case protocol.ContentToolCall:
 			if message.Role != protocol.RoleAssistant || part.ToolCall == nil {
-				return chatMessage{}, fmt.Errorf("tool call part is missing call data")
+				return nil, fmt.Errorf("tool call part is missing call data")
 			}
-			encoded.ToolCalls = append(encoded.ToolCalls, chatToolCall{
-				ID: part.ToolCall.ID, Type: "function",
-				Function: chatFunction{Name: part.ToolCall.Name, Arguments: string(part.ToolCall.Arguments)},
-			})
+			toolCalls = append(toolCalls, toolCallObject(*part.ToolCall))
 		case protocol.ContentAudio:
 			if message.Role != protocol.RoleUser {
-				return chatMessage{}, fmt.Errorf("audio input requires user role")
+				return nil, fmt.Errorf("audio input requires user role")
 			}
 			audio, err := encodeAudioPart(part.Media)
 			if err != nil {
-				return chatMessage{}, err
+				return nil, err
 			}
 			contentParts = append(contentParts, audio)
 		case protocol.ContentProvider:
 			block, err := decodeNativeBlock(part.Data)
 			if err != nil {
-				return chatMessage{}, err
+				return nil, err
 			}
 			contentParts = append(contentParts, block)
 		case protocol.ContentToolResult:
-			return chatMessage{}, fmt.Errorf("tool result must use role %q", protocol.RoleTool)
+			return nil, fmt.Errorf("tool result must use role %q", protocol.RoleTool)
 		default:
-			return chatMessage{}, fmt.Errorf("unsupported content type %q", part.Type)
+			return nil, fmt.Errorf("unsupported content type %q", part.Type)
 		}
 	}
-	encoded.ReasoningContent = reasoning.String()
+	if reasoning.Len() > 0 {
+		encoded["reasoning_content"] = reasoning.String()
+	}
 	if hasMediaContent(contentParts) {
-		encoded.Content = contentParts
-	} else if text.Len() > 0 || len(encoded.ToolCalls) == 0 {
-		encoded.Content = text.String()
+		encoded["content"] = contentParts
+	} else if text.Len() > 0 || len(toolCalls) == 0 {
+		encoded["content"] = text.String()
+	}
+	if len(toolCalls) > 0 {
+		encoded["tool_calls"] = toolCalls
+	}
+	for key, value := range message.ProviderOptions {
+		encoded[key] = value
 	}
 	return encoded, nil
+}
+
+func toolCallObject(call protocol.ToolCall) map[string]any {
+	function := map[string]any{"arguments": string(call.Arguments)}
+	if call.Name != "" {
+		function["name"] = call.Name
+	}
+	object := map[string]any{"type": "function", "function": function}
+	if call.ID != "" {
+		object["id"] = call.ID
+	}
+	return object
 }
 
 // encodeImagePart converts a provider-neutral image MediaContent into an
@@ -338,7 +306,7 @@ func encodeFilePart(media *protocol.MediaContent) (map[string]any, error) {
 	return filePart, nil
 }
 
-func encodeToolResults(message protocol.Message) ([]chatMessage, error) {
+func encodeToolResults(message protocol.Message) ([]map[string]any, error) {
 	if err := validateChatMessageOptions(message.ProviderOptions); err != nil {
 		return nil, err
 	}
@@ -347,9 +315,9 @@ func encodeToolResults(message protocol.Message) ([]chatMessage, error) {
 		return nil, fmt.Errorf("tool message has no tool result")
 	}
 	if len(message.ProviderOptions) > 0 && len(results) != 1 {
-		return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "message provider options require exactly one tool result; split the message or use DoNative"}
+		return nil, &protocol.Error{Code: protocol.ErrorUnsupported, Message: "message provider options require exactly one tool result; split the message"}
 	}
-	messages := make([]chatMessage, 0, len(results))
+	messages := make([]map[string]any, 0, len(results))
 	for _, result := range results {
 		var content strings.Builder
 		for index, part := range result.Content {
@@ -361,9 +329,14 @@ func encodeToolResults(message protocol.Message) ([]chatMessage, error) {
 			}
 			content.WriteString(part.Text)
 		}
-		messages = append(messages, chatMessage{
-			Role: "tool", ToolCallID: result.ToolCallID, Content: content.String(), providerOptions: message.ProviderOptions,
-		})
+		encoded := map[string]any{"role": "tool", "content": content.String()}
+		if result.ToolCallID != "" {
+			encoded["tool_call_id"] = result.ToolCallID
+		}
+		for key, value := range message.ProviderOptions {
+			encoded[key] = value
+		}
+		messages = append(messages, encoded)
 	}
 	return messages, nil
 }
@@ -377,80 +350,255 @@ func hasMediaContent(parts []map[string]any) bool {
 	return false
 }
 
-func convertResponse(response chatResponse, providerName string) (protocol.ModelResponse, error) {
-	if len(response.Choices) == 0 {
+// normalizeChatCompletion returns the non-streaming response object.
+// A missing object field becomes "chat.completion". Unknown fields stay.
+// strict rejects any object value other than chat.completion.
+func normalizeChatCompletion(response map[string]any, strict bool) (map[string]any, error) {
+	if response == nil {
+		return nil, fmt.Errorf("OpenAI response must be a JSON object")
+	}
+	switch object := response["object"].(type) {
+	case nil:
+		response["object"] = "chat.completion"
+	case string:
+		if object == "" {
+			response["object"] = "chat.completion"
+		} else if strict && object != "chat.completion" {
+			return nil, fmt.Errorf("non-streaming response object %q is not chat.completion", object)
+		}
+	default:
+		return nil, fmt.Errorf("non-streaming response object must be a string")
+	}
+	choices, exists := response["choices"]
+	if !exists || choices == nil {
+		return nil, fmt.Errorf("OpenAI response has no choices")
+	}
+	if _, ok := choices.([]any); !ok {
+		return nil, fmt.Errorf("OpenAI response choices must be an array")
+	}
+	return response, nil
+}
+
+func decodeJSONObject(body []byte) (map[string]any, error) {
+	var response map[string]any
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+	if response == nil {
+		return nil, fmt.Errorf("OpenAI response must be a JSON object")
+	}
+	return response, nil
+}
+
+func convertChatCompletion(response map[string]any, providerName string) (protocol.ModelResponse, error) {
+	choices, _ := response["choices"].([]any)
+	if len(choices) == 0 {
 		return protocol.ModelResponse{}, fmt.Errorf("OpenAI response has no choices")
 	}
-	choice := response.Choices[0]
-	message, err := convertMessage(choice.Message)
+	choice, ok := choices[0].(map[string]any)
+	if !ok {
+		return protocol.ModelResponse{}, fmt.Errorf("OpenAI choice must be an object")
+	}
+	messageValue, _ := choice["message"].(map[string]any)
+	message, err := convertChatMessage(messageValue)
+	if err != nil {
+		return protocol.ModelResponse{}, err
+	}
+	finishReason, err := optionalString(choice, "finish_reason")
+	if err != nil {
+		return protocol.ModelResponse{}, err
+	}
+	created, err := optionalInt(response, "created")
+	if err != nil {
+		return protocol.ModelResponse{}, err
+	}
+	identifier, err := optionalString(response, "id")
+	if err != nil {
+		return protocol.ModelResponse{}, err
+	}
+	model, err := optionalString(response, "model")
+	if err != nil {
+		return protocol.ModelResponse{}, err
+	}
+	usage, err := convertChatUsage(response["usage"])
 	if err != nil {
 		return protocol.ModelResponse{}, err
 	}
 	return protocol.ModelResponse{
 		Message:      message,
-		FinishReason: mapFinishReason(choice.FinishReason),
-		Usage:        convertUsage(response.Usage),
-		Metadata:     responseMetadata(providerName, response.ID, response.Model, response.Created),
+		FinishReason: mapFinishReason(finishReason),
+		Usage:        usage,
+		Metadata:     responseMetadata(providerName, identifier, model, int64(created)),
 	}, nil
 }
 
-func convertMessage(message responseMessage) (protocol.Message, error) {
+func convertChatMessage(message map[string]any) (protocol.Message, error) {
 	result := protocol.Message{Role: protocol.RoleAssistant}
-	text, err := decodeResponseContent(message.Content)
+	if message == nil {
+		return result, nil
+	}
+	text, err := chatMessageText(message["content"])
 	if err != nil {
 		return protocol.Message{}, err
 	}
 	if text != "" {
 		result.Parts = append(result.Parts, protocol.ContentPart{Type: protocol.ContentText, Text: text})
 	}
-	reasoning := message.ReasoningContent
-	if reasoning == "" {
-		reasoning = message.Reasoning
+	reasoning, err := firstString(message, "reasoning_content", "reasoning")
+	if err != nil {
+		return protocol.Message{}, err
 	}
 	if reasoning != "" {
 		result.Parts = append(result.Parts, protocol.ContentPart{Type: protocol.ContentReasoning, Text: reasoning})
 	}
-	for _, call := range message.ToolCalls {
-		toolCall := protocol.ToolCall{
-			ID: call.ID, Name: call.Function.Name, Arguments: json.RawMessage(call.Function.Arguments),
+	calls, exists := message["tool_calls"]
+	if !exists || calls == nil {
+		return result, nil
+	}
+	toolCalls, ok := calls.([]any)
+	if !ok {
+		return protocol.Message{}, fmt.Errorf("tool_calls must be an array")
+	}
+	for _, item := range toolCalls {
+		call, ok := item.(map[string]any)
+		if !ok {
+			return protocol.Message{}, fmt.Errorf("tool call must be an object")
 		}
+		function, ok := call["function"].(map[string]any)
+		if !ok {
+			return protocol.Message{}, fmt.Errorf("tool call is missing function")
+		}
+		identifier, err := optionalString(call, "id")
+		if err != nil {
+			return protocol.Message{}, err
+		}
+		name, err := optionalString(function, "name")
+		if err != nil {
+			return protocol.Message{}, err
+		}
+		arguments, err := optionalString(function, "arguments")
+		if err != nil {
+			return protocol.Message{}, err
+		}
+		toolCall := protocol.ToolCall{ID: identifier, Name: name, Arguments: json.RawMessage(arguments)}
 		result.Parts = append(result.Parts, protocol.ContentPart{Type: protocol.ContentToolCall, ToolCall: &toolCall})
 	}
 	return result, nil
 }
 
-func decodeResponseContent(raw json.RawMessage) (string, error) {
-	if len(raw) == 0 || string(raw) == "null" {
+func chatMessageText(content any) (string, error) {
+	switch typed := content.(type) {
+	case nil:
 		return "", nil
-	}
-	var text string
-	if err := json.Unmarshal(raw, &text); err == nil {
-		return text, nil
-	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		return "", fmt.Errorf("decode OpenAI message content: %w", err)
-	}
-	var result strings.Builder
-	for _, part := range parts {
-		if part.Type == "text" || part.Type == "output_text" {
-			result.WriteString(part.Text)
+	case string:
+		return typed, nil
+	case []any:
+		var result strings.Builder
+		for _, item := range typed {
+			part, ok := item.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("decode OpenAI message content: content part must be an object")
+			}
+			partType, _ := part["type"].(string)
+			if partType == "text" || partType == "output_text" {
+				text, _ := part["text"].(string)
+				result.WriteString(text)
+			}
 		}
+		return result.String(), nil
+	default:
+		return "", fmt.Errorf("decode OpenAI message content: unsupported content type %T", content)
 	}
-	return result.String(), nil
 }
 
-func convertUsage(usage openAIUsage) protocol.Usage {
-	return protocol.Usage{
-		InputTokens:     usage.PromptTokens,
-		OutputTokens:    usage.CompletionTokens,
-		TotalTokens:     usage.TotalTokens,
-		ReasoningTokens: usage.CompletionDetails.ReasoningTokens,
-		CacheReadTokens: usage.PromptDetails.CachedTokens,
+func convertChatUsage(value any) (protocol.Usage, error) {
+	if value == nil {
+		return protocol.Usage{}, nil
 	}
+	usage, ok := value.(map[string]any)
+	if !ok {
+		return protocol.Usage{}, fmt.Errorf("usage must be an object")
+	}
+	inputTokens, err := optionalInt(usage, "prompt_tokens")
+	if err != nil {
+		return protocol.Usage{}, err
+	}
+	outputTokens, err := optionalInt(usage, "completion_tokens")
+	if err != nil {
+		return protocol.Usage{}, err
+	}
+	totalTokens, err := optionalInt(usage, "total_tokens")
+	if err != nil {
+		return protocol.Usage{}, err
+	}
+	reasoningTokens, err := nestedInt(usage, "completion_tokens_details", "reasoning_tokens")
+	if err != nil {
+		return protocol.Usage{}, err
+	}
+	cacheReadTokens, err := nestedInt(usage, "prompt_tokens_details", "cached_tokens")
+	if err != nil {
+		return protocol.Usage{}, err
+	}
+	return protocol.Usage{
+		InputTokens:     inputTokens,
+		OutputTokens:    outputTokens,
+		TotalTokens:     totalTokens,
+		ReasoningTokens: reasoningTokens,
+		CacheReadTokens: cacheReadTokens,
+	}, nil
+}
+
+func firstString(object map[string]any, keys ...string) (string, error) {
+	for _, key := range keys {
+		value, exists := object[key]
+		if !exists || value == nil {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			return "", fmt.Errorf("%s must be a string", key)
+		}
+		if text != "" {
+			return text, nil
+		}
+	}
+	return "", nil
+}
+
+func optionalString(object map[string]any, key string) (string, error) {
+	value, exists := object[key]
+	if !exists || value == nil {
+		return "", nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", key)
+	}
+	return text, nil
+}
+
+func optionalInt(object map[string]any, key string) (int, error) {
+	value, exists := object[key]
+	if !exists || value == nil {
+		return 0, nil
+	}
+	number, ok := value.(float64)
+	if !ok {
+		return 0, fmt.Errorf("%s must be a number", key)
+	}
+	return int(number), nil
+}
+
+func nestedInt(object map[string]any, parent, key string) (int, error) {
+	value, exists := object[parent]
+	if !exists || value == nil {
+		return 0, nil
+	}
+	nested, ok := value.(map[string]any)
+	if !ok {
+		return 0, fmt.Errorf("%s must be an object", parent)
+	}
+	return optionalInt(nested, key)
 }
 
 func mapFinishReason(reason string) protocol.FinishReason {
