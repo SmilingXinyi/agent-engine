@@ -1,9 +1,9 @@
 # Changelog
 
-## v0.3.0 — Unreleased — pull streams preserving original SSE frames
+## v0.3.0 — 2026-10-16 — pull streams preserving original SSE frames
 
 Streaming changes are limited to ai-sdk. Workspace lifecycle callers now import
-hooks and request metadata from protocol; no release tag is created here.
+hooks and request metadata from protocol. The Go module release tag is `ai-sdk/v0.3.0`.
 
 ### Breaking streaming contract
 
