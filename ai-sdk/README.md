@@ -5,11 +5,16 @@ contract; `Generate` returns a normalized result and `Stream` delivers original
 SSE frames. The OpenAI-compatible provider supports Chat Completions and Responses.
 The SDK does not execute tools or manage conversations.
 
-This checkout targets **v0.3.0 (unreleased)**, a breaking streaming redesign.
-Published v0.2.1 uses the previous callback API. Use a local Go workspace or a
-local `replace` to try this checkout; no release tag is created by this change.
-Go submodule release tags use `ai-sdk/vX.Y.Z`; breaking changes during 0.x increment
-the minor version. See [CHANGELOG](CHANGELOG.md) for the migration notes.
+Install v0.3.5 with:
+
+```sh
+go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.5
+```
+
+v0.3.5 adds `Chat` for a native Chat Completions object and removes `DoNative`.
+Streaming stays the v0.3.0 pull reader. Go submodule release tags use
+`ai-sdk/vX.Y.Z`. See [CHANGELOG](CHANGELOG.md) for the migration notes. Local
+development can use a Go workspace or a `replace` directive.
 
 Requires Go 1.25+, with only standard-library dependencies. Verify independently:
 
