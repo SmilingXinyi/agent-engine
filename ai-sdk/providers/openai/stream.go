@@ -23,8 +23,14 @@ func (provider *Provider) Stream(ctx context.Context, request protocol.ModelRequ
 	if err != nil {
 		return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
+	return provider.openSSE(ctx, encoded)
+}
+
+// openSSE sends one streaming body and returns the frame reader. The body is
+// not read until Next.
+func (provider *Provider) openSSE(ctx context.Context, body []byte) (protocol.Stream, error) {
 	streamContext, cancel := context.WithCancel(ctx)
-	response, info, err := provider.send(streamContext, encoded, true)
+	response, info, err := provider.send(streamContext, body, true)
 	if err != nil {
 		cancel()
 		return nil, err

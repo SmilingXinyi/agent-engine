@@ -229,9 +229,12 @@ return stream.Err()
 
 ## 原生 Chat Completions
 
-非流式原生请求使用 `Chat`。`ChatRequest.Messages` 是 `[]map[string]any`，返回值是
-`map[string]any`，`object` 为 `chat.completion`，未知字段保留。`Stream` 为 true 时拒绝；
-原始 SSE 仍使用上面的 `Stream`。
+原生消息使用 `ChatRequest`。`Messages` 是 `[]map[string]any`，不会和
+`protocol.ModelRequest` 的 `[]Message` 混在同一个字段里。
+
+`Chat` 是非流式调用，返回 `map[string]any`，`object` 为 `chat.completion`，未知字段保留。
+`ChatStream` 强制 `stream: true`，按原始 SSE 帧返回，用法与 `Stream` 的 reader 相同。
+两者都不注入 `stream_options`。`Chat` 在 `Stream` 为 true 时拒绝。
 
 ```go
 response, err := provider.Chat(ctx, openai.ChatRequest{
@@ -240,9 +243,16 @@ response, err := provider.Chat(ctx, openai.ChatRequest{
         {"role": "user", "content": "你好", "vendor_extension": true},
     },
 })
+
+stream, err := provider.ChatStream(ctx, openai.ChatRequest{
+    Model: "your-model",
+    Messages: []map[string]any{
+        {"role": "user", "content": "你好"},
+    },
+})
 ```
 
-`Generate` 仍返回统一的 `ModelResponse`。它的 `Raw` 保留上游原始响应 JSON，包括未知字段。
+`Generate` 和 `Stream` 仍使用 `protocol.ModelRequest`。`Generate` 的 `Raw` 保留上游原始响应 JSON，包括未知字段。
 
 ## 错误和观测
 
