@@ -54,6 +54,14 @@ func (request ModelRequest) Clone() ModelRequest {
 		value.Schema = append(json.RawMessage(nil), value.Schema...)
 		request.OutputFormat = &value
 	}
+	if request.FirstFrameTimeout != nil {
+		value := *request.FirstFrameTimeout
+		request.FirstFrameTimeout = &value
+	}
+	if request.IdleTimeout != nil {
+		value := *request.IdleTimeout
+		request.IdleTimeout = &value
+	}
 	return request
 }
 

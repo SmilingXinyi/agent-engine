@@ -58,8 +58,14 @@ type Config struct {
 	// ResponseHeaderTimeout applies only to the default transport. Zero disables
 	// this timeout. There is no default total timeout; callers should use context.
 	ResponseHeaderTimeout time.Duration
-	Retry                 RetryPolicy
-	OnAttempt             func(context.Context, AttemptInfo) error
+	// FirstFrameTimeout is the default wait for the first SSE frame with non-empty
+	// data. IdleTimeout is the default wait for each later frame. Zero disables
+	// that timer. Generate and Chat do not use them. A request pointer overrides
+	// the default; zero in that pointer disables the timer for one call.
+	FirstFrameTimeout time.Duration
+	IdleTimeout       time.Duration
+	Retry             RetryPolicy
+	OnAttempt         func(context.Context, AttemptInfo) error
 	// MaxResponseBytes defaults to 16 MiB. MaxStreamBytes=0 has no total stream
 	// limit. MaxEventBytes defaults to 1 MiB including SSE framing.
 	MaxResponseBytes int64
@@ -71,18 +77,20 @@ type Config struct {
 }
 
 type Provider struct {
-	name             string
-	apiType          APIType
-	baseURL          string
-	apiKey           string
-	headers          map[string]string
-	httpClient       *http.Client
-	retry            RetryPolicy
-	onAttempt        func(context.Context, AttemptInfo) error
-	maxResponseBytes int64
-	maxStreamBytes   int64
-	maxEventBytes    int64
-	requireDone      bool
+	name              string
+	apiType           APIType
+	baseURL           string
+	apiKey            string
+	headers           map[string]string
+	httpClient        *http.Client
+	retry             RetryPolicy
+	onAttempt         func(context.Context, AttemptInfo) error
+	maxResponseBytes  int64
+	maxStreamBytes    int64
+	maxEventBytes     int64
+	requireDone       bool
+	firstFrameTimeout time.Duration
+	idleTimeout       time.Duration
 }
 
 func New(config Config) (*Provider, error) {
@@ -91,7 +99,7 @@ func New(config Config) (*Provider, error) {
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, &protocol.Error{Code: protocol.ErrorInvalidRequest, Provider: "openai", Message: "base URL must be an HTTP(S) URL without query or fragment", Cause: err}
 	}
-	if config.ResponseHeaderTimeout < 0 || config.Retry.MaxRetries < 0 || config.Retry.Backoff < 0 || config.Retry.MaxBackoff < 0 || config.MaxResponseBytes < 0 || config.MaxStreamBytes < 0 || config.MaxEventBytes < 0 {
+	if config.ResponseHeaderTimeout < 0 || config.FirstFrameTimeout < 0 || config.IdleTimeout < 0 || config.Retry.MaxRetries < 0 || config.Retry.Backoff < 0 || config.Retry.MaxBackoff < 0 || config.MaxResponseBytes < 0 || config.MaxStreamBytes < 0 || config.MaxEventBytes < 0 {
 		return nil, &protocol.Error{Code: protocol.ErrorInvalidRequest, Provider: "openai", Message: "timeouts, retries and limits must be nonnegative"}
 	}
 	client := config.HTTPClient
@@ -130,7 +138,7 @@ func New(config Config) (*Provider, error) {
 		headers: utils.CloneMap(config.Headers), httpClient: client, retry: retry, onAttempt: config.OnAttempt,
 		maxResponseBytes: positiveOrDefault(config.MaxResponseBytes, defaultMaxResponseBytes),
 		maxStreamBytes:   config.MaxStreamBytes, maxEventBytes: positiveOrDefault(config.MaxEventBytes, defaultMaxEventBytes),
-		requireDone: config.RequireDone,
+		requireDone: config.RequireDone, firstFrameTimeout: config.FirstFrameTimeout, idleTimeout: config.IdleTimeout,
 	}, nil
 }
 
@@ -212,7 +220,11 @@ func (provider *Provider) ChatStream(ctx context.Context, request ChatRequest) (
 	if err != nil {
 		return nil, err
 	}
-	return provider.openSSE(ctx, body)
+	timeouts, err := provider.streamTimeouts(request.FirstFrameTimeout, request.IdleTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return provider.openSSE(ctx, body, timeouts)
 }
 
 func (provider *Provider) chatJSON(request ChatRequest, stream bool) ([]byte, error) {
