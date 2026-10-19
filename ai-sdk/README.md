@@ -5,16 +5,17 @@ contract; `Generate` returns a normalized result and `Stream` delivers original
 SSE frames. The OpenAI-compatible provider supports Chat Completions and Responses.
 The SDK does not execute tools or manage conversations.
 
-Install v0.3.6 with:
+Install v0.4.0 with:
 
 ```sh
-go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.6
+go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.4.0
 ```
 
-v0.3.6 adds `ChatStream` for native Chat Completions messages. `Chat` remains the
-non-streaming object call. Go submodule release tags use `ai-sdk/vX.Y.Z`. See
-[CHANGELOG](CHANGELOG.md) for the migration notes. Local development can use a
-Go workspace or a `replace` directive.
+v0.4.0 adds `openai.Accumulator` for folding Chat Completions SSE data into one
+`chat.completion` object. `ChatStream` still returns the original frames, and
+`Chat` remains the non-streaming object call. Go submodule release tags use
+`ai-sdk/vX.Y.Z`. See [CHANGELOG](CHANGELOG.md) for the migration notes. Local
+development can use a Go workspace or a `replace` directive.
 
 Requires Go 1.25+, with only standard-library dependencies. Verify independently:
 
@@ -58,8 +59,9 @@ return stream.Err()
 ```
 
 Import `errors` for the example. There is no sink, producer goroutine, channel,
-semantic event splitting, or accumulated response. This release does not add a
-normalizer or collector. `Generate` remains available for the normalized result.
+or semantic event splitting. The reader does not accumulate a response.
+`openai.Accumulator` is optional and only folds Chat Completions `data` payloads.
+`Generate` remains available for the normalized result.
 
 - Each successful `Next()` exposes one original SSE frame via `Chunk()`.
   `Frame` preserves exact bytes, including delimiters, comments, empty frames,
