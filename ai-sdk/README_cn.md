@@ -8,8 +8,9 @@
 
 要求 Go 1.25+，只有标准库依赖。
 
-使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.6` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.3.6`。这一版新增 `ChatStream`，原生消息仍放在
+使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.4.0` 固定版本。
+Go 子模块发布标签为 `ai-sdk/v0.4.0`。这一版新增 `openai.Accumulator`，把 Chat Completions
+的 SSE `data` 拼成一份 `chat.completion`。`ChatStream` 仍返回原始帧，原生消息仍放在
 `ChatRequest.Messages`。`Chat` 继续负责非流式 `chat.completion`。本地开发可以在调用项目的
 `go.work` 中引用此模块，或通过 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
 
@@ -253,6 +254,12 @@ stream, err := provider.ChatStream(ctx, openai.ChatRequest{
 ```
 
 `Generate` 和 `Stream` 仍使用 `protocol.ModelRequest`。`Generate` 的 `Raw` 保留上游原始响应 JSON，包括未知字段。
+
+流本身不累计正文。需要把 Chat Completions 的 `data` 拼回去时，使用 `openai.Accumulator`：
+`Add` 接收每一帧的 `Data`，`[DONE]` 和空数据会被忽略，坏 JSON 返回错误。`Finished` 表示见过非空
+`finish_reason`，之后的 usage 帧仍应继续 `Add`。`Completion` 返回 `object` 为 `chat.completion` 的对象，
+`usage` 保留全部字段。`Usage` 只返回 `prompt_tokens` 和 `completion_tokens`，缺省为 0。
+只读取 `choices[0]`，不处理 `tool_calls`。它不会改变 `Stream` 或 `Info().Complete`。
 
 ## 错误和观测
 

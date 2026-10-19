@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.0 — 2026-10-19 — chat completion accumulator
+
+- Add `openai.Accumulator`. `Add` folds Chat Completions SSE `data` payloads into
+  one `chat.completion` object and keeps the full `usage` object.
+  `Stream` and `ChatStream` still return the original frames and do not call it.
+  The Go module release tag is `ai-sdk/v0.4.0`.
+
 ## v0.3.6 — 2026-10-16 — native chat streams
 
 - Add `ChatStream`. It takes `ChatRequest` with `[]map[string]any` messages and
