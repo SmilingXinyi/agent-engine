@@ -11,7 +11,7 @@ import (
 
 	"github.com/SmilingXinyi/agent-engine/agent-skill/protocol"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
+	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 )
 
 // BuildListing includes only metadata. The model decides relevance and requests

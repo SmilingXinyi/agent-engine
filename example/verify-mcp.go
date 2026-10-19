@@ -10,9 +10,9 @@ import (
 	"time"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
+	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 	mcpruntime "github.com/SmilingXinyi/agent-engine/mcp-runtime"
 	"github.com/SmilingXinyi/agent-engine/mcp-runtime/protocol"
-	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
 )
 
 func main() {

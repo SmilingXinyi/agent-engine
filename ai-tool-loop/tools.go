@@ -1,4 +1,4 @@
-package toolloop
+package aitoolloop
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"time"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	"github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
-	"github.com/SmilingXinyi/agent-engine/tool-loop/utils"
+	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
 )
 
 func prepareTools(tools []protocol.Tool) (map[string]protocol.Tool, error) {

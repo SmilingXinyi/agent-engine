@@ -4,7 +4,7 @@ import (
 	"strconv"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	"github.com/SmilingXinyi/agent-engine/tool-loop/utils"
+	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
 )
 
 // Clone copies mutable request data, preserving executors and callbacks.

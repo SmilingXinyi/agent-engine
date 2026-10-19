@@ -5,8 +5,8 @@
 ## 模块结构
 
 - `ai-sdk`: 核心 AI SDK 模块。
-- `tool-loop`: 顺序模型/工具循环、生命周期 Hook 和执行记录，参见[使用说明](./tool-loop/README_cn.md)。
-- `agent`: Prompt 与历史上下文组织，委托 tool-loop 执行，参见[使用说明](./agent/README_cn.md)。
+- `ai-tool-loop`: 顺序模型/工具循环、生命周期 Hook 和执行记录，参见[使用说明](./ai-tool-loop/README_cn.md)。
+- `agent`: Prompt 与历史上下文组织，委托 AI Tool Loop 执行，参见[使用说明](./agent/README_cn.md)。
 - `agent-skill`: 本地 SKILL.md 解析、技能目录和按需读取工具，参见[使用说明](./agent-skill/README_cn.md)。
 - `mcp-runtime`: MCP stdio / Streamable HTTP 连接、工具发现及执行适配，参见[使用说明](./mcp-runtime/README_cn.md)。
 
@@ -33,12 +33,12 @@ go work sync
 执行测试：
 
 ```bash
-go test ./agent/... ./agent-skill/... ./ai-sdk/... ./tool-loop/... ./mcp-runtime/...
+go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./mcp-runtime/...
 ```
 
 ## 历史实现的取舍
 
-`out/` 是历史参考代码。新框架保持单向依赖：`agent → tool-loop → ai-sdk`，`agent-skill` 与 `mcp-runtime` 提供 loop 工具，由调用方组装。Agent 不加载目录、连接 MCP、创建 Provider 或保存会话。
+`out/` 是历史参考代码。新框架保持单向依赖：`agent → ai-tool-loop → ai-sdk`，`agent-skill` 与 `mcp-runtime` 提供 loop 工具，由调用方组装。Agent 不加载目录、连接 MCP、创建 Provider 或保存会话。
 
 | 历史能力 | 当前处理 | 原因 |
 | --- | --- | --- |

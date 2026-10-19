@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
+	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 )
 
 func (request Request) Validate() error {

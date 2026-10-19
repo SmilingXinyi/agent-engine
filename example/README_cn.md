@@ -41,7 +41,7 @@ go run ./example/run-agent/main.go -skills example/.agents/skills
 ## 本地测试
 
 ```bash
-go test ./ai-sdk/... ./tool-loop/... ./agent/... ./agent-skill/... ./mcp-runtime/...
+go test ./ai-sdk/... ./ai-tool-loop/... ./agent/... ./agent-skill/... ./mcp-runtime/...
 go test ./example/run-agent/*.go
 go test ./example/verify-mcp.go
 ```

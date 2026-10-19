@@ -20,9 +20,9 @@ import (
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-sdk/providers/openai"
+	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 	mcpruntime "github.com/SmilingXinyi/agent-engine/mcp-runtime"
 	mcpprot "github.com/SmilingXinyi/agent-engine/mcp-runtime/protocol"
-	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
 )
 
 func main() {

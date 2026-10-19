@@ -7,7 +7,7 @@ import (
 	"github.com/SmilingXinyi/agent-engine/agent/protocol"
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
+	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 	"reflect"
 	"testing"
 )

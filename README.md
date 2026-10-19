@@ -5,8 +5,8 @@ This repository is structured as a Go multi-module workspace using `go.work`.
 ## Modules
 
 - `ai-sdk`: Core AI SDK module.
-- `tool-loop`: Sequential model/tool execution, lifecycle hooks and execution records. See [usage](./tool-loop/README_cn.md).
-- `agent`: Prompt/history assembly over tool-loop. See [usage](./agent/README_cn.md).
+- `ai-tool-loop`: Sequential model/tool execution, lifecycle hooks and execution records. See [usage](./ai-tool-loop/README_cn.md).
+- `agent`: Prompt/history assembly over AI Tool Loop. See [usage](./agent/README_cn.md).
 - `agent-skill`: Local SKILL.md loading, metadata listings and on-demand instruction tools. See [usage](./agent-skill/README_cn.md).
 - `mcp-runtime`: MCP stdio/Streamable HTTP connections and tool discovery. See [usage](./mcp-runtime/README_cn.md).
 
@@ -33,7 +33,7 @@ go work sync
 Run tests across the workspace:
 
 ```bash
-go test ./agent/... ./agent-skill/... ./ai-sdk/... ./tool-loop/... ./mcp-runtime/...
+go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./mcp-runtime/...
 ```
 
 ## License

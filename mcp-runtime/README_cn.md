@@ -1,10 +1,10 @@
 # mcp-runtime
 
-与历史 `out/mcp-runtime` 相比，本模块直接输出 `tool-loop/protocol.Tool`，去掉旧 Engine / Loop 的类型桥接。保留 stdio、Streamable HTTP、自定义 HTTPClient / headers、环境变量覆盖、分页发现、名称前缀和连接释放；另有整服务 / 原始工具名禁用。暂不增加 legacy SSE 或重连配置。
+与历史 `out/mcp-runtime` 相比，本模块直接输出 `ai-tool-loop/protocol.Tool`，去掉旧 Engine / Loop 的类型桥接。保留 stdio、Streamable HTTP、自定义 HTTPClient / headers、环境变量覆盖、分页发现、名称前缀和连接释放；另有整服务 / 原始工具名禁用。暂不增加 legacy SSE 或重连配置。
 
 在连接前校验 HTTP header 名称和控制字符。发现工具时要求 schema 为 JSON object，根 `type` 若存在也必须为 `object`。执行参数保留原始 JSON 值，避免大整数经 float64 转换后改变。非文本 MCP 内容仍作为 JSON 文本返回，视觉消息转换需要单独的模型适配。
 
-使用官方 MCP Go SDK 连接服务器、发现工具并适配为 `tool-loop/protocol.Tool`。生产代码只依赖循环的工具契约，不依赖 Agent；端到端测试使用 Agent 验证组合行为。支持 stdio 和 Streamable HTTP。调用方持有 Runtime，可在多次 Agent 请求间复用；用完后调用 `Close` 释放连接和子进程。
+使用官方 MCP Go SDK 连接服务器、发现工具并适配为 `ai-tool-loop/protocol.Tool`。生产代码只依赖循环的工具契约，不依赖 Agent；端到端测试使用 Agent 验证组合行为。支持 stdio 和 Streamable HTTP。调用方持有 Runtime，可在多次 Agent 请求间复用；用完后调用 `Close` 释放连接和子进程。
 
 工具名统一为 `{server_name}_{tool_name}`，例如 `filesystem_read_file`。实际 MCP 请求仍使用服务器原始工具名。模型可见名称限定为 1–64 个字母、数字、下划线或连字符；重名会返回错误。
 
@@ -22,7 +22,7 @@ import (
     agentprot "github.com/SmilingXinyi/agent-engine/agent/protocol"
     ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
     aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-    loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
+    loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
     "github.com/SmilingXinyi/agent-engine/ai-sdk/providers/openai"
     mcpruntime "github.com/SmilingXinyi/agent-engine/mcp-runtime"
     mcpprot "github.com/SmilingXinyi/agent-engine/mcp-runtime/protocol"
@@ -140,5 +140,5 @@ Runtime 在启动时读取完整的工具列表；新增或删除服务器工具
 在工作区根目录执行本地测试，无需真实模型或外部 MCP 服务：
 
 ```bash
-go test ./agent/... ./ai-sdk/... ./tool-loop/... ./mcp-runtime/...
+go test ./agent/... ./ai-sdk/... ./ai-tool-loop/... ./mcp-runtime/...
 ```

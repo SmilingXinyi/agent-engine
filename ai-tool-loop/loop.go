@@ -1,5 +1,5 @@
-// Package toolloop runs sequential model and tool calls through ai-sdk.
-package toolloop
+// Package aitoolloop runs sequential model/tool calls through ai-sdk.
+package aitoolloop
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	"github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
-	"github.com/SmilingXinyi/agent-engine/tool-loop/utils"
+	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
 )
 
 type Loop struct{ client *ai.Client }
@@ -25,7 +25,7 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 		return result, err
 	}
 	if loop == nil || loop.client == nil {
-		return result, errors.New("tool-loop client is required")
+		return result, errors.New("ai-tool-loop client is required")
 	}
 	if strings.TrimSpace(request.Model) == "" || len(request.Messages) == 0 {
 		return result, errors.New("model and at least one message are required")

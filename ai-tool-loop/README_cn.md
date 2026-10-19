@@ -1,10 +1,10 @@
-# tool-loop
+# ai-tool-loop
 
-通过 `ai-sdk.Client` 执行顺序模型/工具循环。模型调用和工具执行只有一套实现；`agent` 负责组织 Prompt/History，`mcp-runtime` 负责连接与工具适配。模块路径是 `tool-loop`，不保留 `ai-tool-loop` 别名。
+通过 `ai-sdk.Client` 执行顺序模型/工具循环。模型调用和工具执行只有一套实现；`agent` 负责组织 Prompt/History，`mcp-runtime` 负责连接与工具适配。
 
 ```text
-example → agent → tool-loop → ai-sdk
-example → mcp-runtime → tool-loop/protocol
+example → agent → ai-tool-loop → ai-sdk
+example → mcp-runtime → ai-tool-loop/protocol
 ```
 
 最小调用（`client` 为已配置好的 `*ai.Client`）：
@@ -15,8 +15,8 @@ import (
     "fmt"
 
     aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-    loop "github.com/SmilingXinyi/agent-engine/tool-loop"
-    "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
+    loop "github.com/SmilingXinyi/agent-engine/ai-tool-loop"
+    "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 )
 
 result, err := loop.New(client).Run(context.Background(), protocol.Request{

@@ -3,7 +3,7 @@ package protocol
 
 import (
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
+	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 )
 
 // Request organizes one execution. The caller owns history and persistence.

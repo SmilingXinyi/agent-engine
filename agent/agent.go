@@ -6,8 +6,8 @@ import (
 	"errors"
 	"github.com/SmilingXinyi/agent-engine/agent/protocol"
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
-	loop "github.com/SmilingXinyi/agent-engine/tool-loop"
-	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
+	loop "github.com/SmilingXinyi/agent-engine/ai-tool-loop"
+	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 )
 
 type Agent struct{ loop *loop.Loop }
