@@ -9,7 +9,7 @@
 要求 Go 1.25+，只有标准库依赖。
 
 使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.6` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.3.6`。这一版新增 `ChatStream`，原生消息仍放在
+Go 子模块发布标签为 `ai-sdk/v0.3.6`。这一版新增 `StreamChat`，原生消息仍放在
 `ChatRequest.Messages`。`Chat` 继续负责非流式 `chat.completion`。本地开发可以在调用项目的
 `go.work` 中引用此模块，或通过 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
 
@@ -233,7 +233,7 @@ return stream.Err()
 `protocol.ModelRequest` 的 `[]Message` 混在同一个字段里。
 
 `Chat` 是非流式调用，返回 `map[string]any`，`object` 为 `chat.completion`，未知字段保留。
-`ChatStream` 强制 `stream: true`，按原始 SSE 帧返回，用法与 `Stream` 的 reader 相同。
+`StreamChat` 强制 `stream: true`，按原始 SSE 帧返回，用法与 `Stream` 的 reader 相同。
 两者都不注入 `stream_options`。`Chat` 在 `Stream` 为 true 时拒绝。
 
 ```go
@@ -244,7 +244,7 @@ response, err := provider.Chat(ctx, openai.ChatRequest{
     },
 })
 
-stream, err := provider.ChatStream(ctx, openai.ChatRequest{
+stream, err := provider.StreamChat(ctx, openai.ChatRequest{
     Model: "your-model",
     Messages: []map[string]any{
         {"role": "user", "content": "你好"},

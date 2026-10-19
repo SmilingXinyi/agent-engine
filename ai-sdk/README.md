@@ -11,7 +11,7 @@ Install v0.3.6 with:
 go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.6
 ```
 
-v0.3.6 adds `ChatStream` for native Chat Completions messages. `Chat` remains the
+v0.3.6 adds `StreamChat` for native Chat Completions messages. `Chat` remains the
 non-streaming object call. Go submodule release tags use `ai-sdk/vX.Y.Z`. See
 [CHANGELOG](CHANGELOG.md) for the migration notes. Local development can use a
 Go workspace or a `replace` directive.

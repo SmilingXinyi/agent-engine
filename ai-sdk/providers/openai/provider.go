@@ -205,9 +205,9 @@ func (provider *Provider) Chat(ctx context.Context, request ChatRequest) (map[st
 	return response, nil
 }
 
-// ChatStream sends one Chat Completions request with stream set to true.
+// StreamChat sends one Chat Completions request with stream set to true.
 // Messages stay native objects. Next delivers the original SSE frames.
-func (provider *Provider) ChatStream(ctx context.Context, request ChatRequest) (protocol.Stream, error) {
+func (provider *Provider) StreamChat(ctx context.Context, request ChatRequest) (protocol.Stream, error) {
 	body, err := provider.chatJSON(request, true)
 	if err != nil {
 		return nil, err
@@ -218,13 +218,13 @@ func (provider *Provider) ChatStream(ctx context.Context, request ChatRequest) (
 func (provider *Provider) chatJSON(request ChatRequest, stream bool) ([]byte, error) {
 	method := "Chat"
 	if stream {
-		method = "ChatStream"
+		method = "StreamChat"
 	}
 	if provider.apiType != APITypeChatCompletions {
 		return nil, provider.failure(fmt.Errorf("%s requires the Chat Completions API", method), protocol.ErrorUnsupported, protocol.CallInfo{})
 	}
 	if !stream && request.Stream {
-		return nil, provider.failure(fmt.Errorf("Chat is non-streaming; use ChatStream for SSE"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
+		return nil, provider.failure(fmt.Errorf("Chat is non-streaming; use StreamChat for SSE"), protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
 	if strings.TrimSpace(request.Model) == "" {
 		return nil, provider.failure(fmt.Errorf("model is required"), protocol.ErrorInvalidRequest, protocol.CallInfo{})

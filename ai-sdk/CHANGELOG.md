@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Rename `ChatStream` to `StreamChat`.
+
 ## v0.3.6 — 2026-10-16 — native chat streams
 
 - Add `ChatStream`. It takes `ChatRequest` with `[]map[string]any` messages and
