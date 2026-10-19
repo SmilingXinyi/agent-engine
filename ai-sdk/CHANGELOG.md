@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.0 — 2026-10-19 — stream stall timeouts
+
+- Add `FirstFrameTimeout` and `IdleTimeout` on `openai.Config`, `protocol.ModelRequest`,
+  and `openai.ChatRequest`. Zero disables a timer. A nil request pointer inherits the
+  provider value, and zero in that pointer disables it for one call.
+- `Stream` and `ChatStream` wait for the first SSE frame with non-empty data, then
+  for each later frame. Comments and blank data do not end or reset the first wait.
+  A stall returns `ErrorTimeout` with `TimeoutKind` `first_frame` or `idle`.
+  Only the first-frame timeout is retryable. `Generate` and `Chat` ignore both timers.
+  The Go module release tag is `ai-sdk/v0.5.0`.
+
 ## v0.4.0 — 2026-10-19 — chat completion accumulator
 
 - Add `openai.Accumulator`. `Add` folds Chat Completions SSE `data` payloads into
