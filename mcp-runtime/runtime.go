@@ -1,4 +1,4 @@
-// Package mcpruntime connects MCP servers and exposes their tools to ai-tool-loop.
+// Package mcpruntime connects MCP servers and exposes their tools to tool-loop.
 package mcpruntime
 
 import (
@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 	"github.com/SmilingXinyi/agent-engine/mcp-runtime/protocol"
+	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

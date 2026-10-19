@@ -1,17 +1,16 @@
-// Package aitoolloop runs sequential model/tool calls through ai-sdk.
-package aitoolloop
+// Package toolloop runs sequential model and tool calls through ai-sdk.
+package toolloop
 
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
+	"github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
+	"github.com/SmilingXinyi/agent-engine/tool-loop/utils"
 )
 
 type Loop struct{ client *ai.Client }
@@ -26,7 +25,7 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 		return result, err
 	}
 	if loop == nil || loop.client == nil {
-		return result, errors.New("ai-tool-loop client is required")
+		return result, errors.New("tool-loop client is required")
 	}
 	if strings.TrimSpace(request.Model) == "" || len(request.Messages) == 0 {
 		return result, errors.New("model and at least one message are required")
@@ -88,13 +87,7 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 	if err != nil {
 		return true, err
 	}
-	modelRequest := aiprot.ModelRequest{
-		Model: request.Model, Messages: utils.Clone(result.Messages),
-		Metadata: map[string]string{"run_id": result.RunID, aiprot.RequestIDMetadataKey: requestID, "step": strconv.Itoa(step)},
-	}
-	for _, tool := range request.Tools {
-		modelRequest.Tools = append(modelRequest.Tools, utils.Clone(tool.Definition))
-	}
+	modelRequest := request.ModelCall(result.Messages, result.RunID, requestID, step)
 	index := len(result.Steps)
 	result.Steps = append(result.Steps, protocol.StepResult{Step: step, RequestID: requestID, StartedAt: time.Now()})
 	toolStart := len(result.ToolCalls)

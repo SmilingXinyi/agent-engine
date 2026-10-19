@@ -1,4 +1,4 @@
-package aitoolloop_test
+package toolloop_test
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	loop "github.com/SmilingXinyi/agent-engine/ai-tool-loop"
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	loop "github.com/SmilingXinyi/agent-engine/tool-loop"
+	"github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
 )
 
 type scriptedProvider struct {
@@ -312,4 +312,57 @@ func TestInvalidRequestsDoNotEnterLifecycle(t *testing.T) {
 
 func noopTool(context.Context, json.RawMessage) (aiprot.ToolResult, error) {
 	return aiprot.TextToolResult("done"), nil
+}
+
+func TestRunForwardsGenerationSettingsOnEveryStep(t *testing.T) {
+	temperature := 0.2
+	maxTokens := 32
+	message := aiprot.TextMessage(aiprot.RoleDeveloper, "rules")
+	message.ProviderOptions = map[string]any{"vendor_extension": map[string]any{"enabled": true}}
+	request := initialRequest()
+	request.Messages = []aiprot.Message{message}
+	request.Temperature = &temperature
+	request.MaxOutputTokens = &maxTokens
+	request.ToolChoice = aiprot.ToolChoiceRequired
+	request.Reasoning = &aiprot.ReasoningOptions{Effort: "low"}
+	request.OutputFormat = &aiprot.OutputFormat{Type: aiprot.OutputJSONSchema, Name: "answer", Schema: json.RawMessage(`{"type":"object"}`), Strict: true}
+	request.ProviderOptions = map[string]any{"thinking": map[string]any{"type": "disabled"}}
+	request.Metadata = map[string]string{"trace": "abc", protocol.MetadataRunID: "caller", aiprot.RequestIDMetadataKey: "caller-request", protocol.MetadataStep: "9"}
+	request.Tools = []protocol.Tool{{Definition: aiprot.ToolDefinition{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}, Execute: func(context.Context, json.RawMessage) (aiprot.ToolResult, error) {
+		return aiprot.TextToolResult("found"), nil
+	}}}
+	modelCalls := 0
+	provider := scriptedProvider{generate: func(_ context.Context, modelRequest aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+		modelCalls++
+		if modelRequest.Temperature == nil || *modelRequest.Temperature != temperature || modelRequest.MaxOutputTokens == nil || *modelRequest.MaxOutputTokens != maxTokens {
+			t.Fatalf("scalars=%#v", modelRequest)
+		}
+		if modelRequest.ToolChoice != aiprot.ToolChoiceRequired || modelRequest.Reasoning == nil || modelRequest.Reasoning.Effort != "low" || modelRequest.OutputFormat == nil || modelRequest.OutputFormat.Type != aiprot.OutputJSONSchema || !modelRequest.OutputFormat.Strict || string(modelRequest.OutputFormat.Schema) != `{"type":"object"}` {
+			t.Fatalf("generation=%#v", modelRequest)
+		}
+		if modelRequest.ProviderOptions["thinking"].(map[string]any)["type"] != "disabled" || modelRequest.Messages[0].ProviderOptions["vendor_extension"].(map[string]any)["enabled"] != true {
+			t.Fatalf("extensions=%#v message=%#v", modelRequest.ProviderOptions, modelRequest.Messages[0].ProviderOptions)
+		}
+		if len(modelRequest.Tools) != 1 || modelRequest.Tools[0].Name != "lookup" || modelRequest.Metadata["trace"] != "abc" || modelRequest.Metadata[protocol.MetadataRunID] == "caller" || modelRequest.Metadata[aiprot.RequestIDMetadataKey] == "caller-request" || modelRequest.Metadata[protocol.MetadataStep] != fmt.Sprint(modelCalls) {
+			t.Fatalf("metadata=%v tools=%#v", modelRequest.Metadata, modelRequest.Tools)
+		}
+		modelRequest.ProviderOptions["thinking"].(map[string]any)["type"] = "changed"
+		modelRequest.OutputFormat.Schema[0] = 'x'
+		modelRequest.Messages[0].ProviderOptions["vendor_extension"].(map[string]any)["enabled"] = false
+		*modelRequest.Temperature = 1
+		if modelCalls == 1 {
+			return toolResponse(call("lookup")), nil
+		}
+		if len(modelRequest.Messages) != 3 || modelRequest.Messages[2].Role != aiprot.RoleTool {
+			t.Fatalf("follow-up=%#v", modelRequest.Messages)
+		}
+		return textResponse("done"), nil
+	}}
+	result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
+	if err != nil || result.StopReason != protocol.StopNatural || modelCalls != 2 {
+		t.Fatalf("result=%#v error=%v calls=%d", result, err, modelCalls)
+	}
+	if request.ProviderOptions["thinking"].(map[string]any)["type"] != "disabled" || string(request.OutputFormat.Schema) != `{"type":"object"}` || request.Messages[0].ProviderOptions["vendor_extension"].(map[string]any)["enabled"] != true || *request.Temperature != temperature {
+		t.Fatal("caller request was shared with the provider")
+	}
 }

@@ -1,10 +1,10 @@
-# ai-tool-loop
+# tool-loop
 
-通过 `ai-sdk.Client` 执行顺序模型/工具循环。模型调用和工具执行只有一套实现；`agent` 负责组织 Prompt/History，`mcp-runtime` 负责连接与工具适配。
+通过 `ai-sdk.Client` 执行顺序模型/工具循环。模型调用和工具执行只有一套实现；`agent` 负责组织 Prompt/History，`mcp-runtime` 负责连接与工具适配。模块路径是 `tool-loop`，不保留 `ai-tool-loop` 别名。
 
 ```text
-example → agent → ai-tool-loop → ai-sdk
-example → mcp-runtime → ai-tool-loop/protocol
+example → agent → tool-loop → ai-sdk
+example → mcp-runtime → tool-loop/protocol
 ```
 
 最小调用（`client` 为已配置好的 `*ai.Client`）：
@@ -15,8 +15,8 @@ import (
     "fmt"
 
     aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-    loop "github.com/SmilingXinyi/agent-engine/ai-tool-loop"
-    "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+    loop "github.com/SmilingXinyi/agent-engine/tool-loop"
+    "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
 )
 
 result, err := loop.New(client).Run(context.Background(), protocol.Request{
@@ -29,6 +29,8 @@ fmt.Println(result.StopReason, result.Usage.TotalTokens, err)
 ```
 
 `Request.Tools` 接收 `[]protocol.Tool`，每个工具为 SDK `ToolDefinition` 加必填的 `Execute` 函数。输入消息、定义、参数、执行记录及 Hook 快照相互隔离；metadata 使用可复制的无环数据，函数、error 和不可见结构字段保持原值。
+
+每一步模型调用都会带上 `Temperature`、`MaxOutputTokens`、`ToolChoice`、`Reasoning`、`OutputFormat` 和 `ProviderOptions`。这些字段与 `ai-sdk` 的 `ModelRequest` 含义相同，循环不改写、不猜测别名。消息上的 `ProviderOptions` 和 `ContentProvider` 内容随消息原样进入后续调用；模型响应里的原生字段留在 `ModelResponse.Raw`，不会被写回请求扩展。`Metadata` 会复制到每一步，其中 `run_id`、`request_id`、`step` 由循环写入并覆盖同名调用方值。流式超时只作用于 SDK 的 `Stream` / `ChatStream`，本模块仍只使用非流式 `Generate`。
 
 ## 执行与停止
 

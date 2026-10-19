@@ -1,4 +1,4 @@
-package aitoolloop_test
+package toolloop_test
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	loop "github.com/SmilingXinyi/agent-engine/ai-tool-loop"
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	loop "github.com/SmilingXinyi/agent-engine/tool-loop"
+	"github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
 )
 
 func TestHookErrorsAndPanicsStopAndPairLifecycle(t *testing.T) {

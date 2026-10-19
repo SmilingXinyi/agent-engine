@@ -1,4 +1,4 @@
-package aitoolloop
+package toolloop
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
+	"github.com/SmilingXinyi/agent-engine/tool-loop/utils"
 )
 
 func newID(prefix string) (string, error) {

@@ -13,8 +13,8 @@ import (
 	"github.com/SmilingXinyi/agent-engine/agent-skill/protocol"
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	loop "github.com/SmilingXinyi/agent-engine/ai-tool-loop"
-	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	loop "github.com/SmilingXinyi/agent-engine/tool-loop"
+	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
 )
 
 func TestToolUsesCatalogSnapshotAndIncludesResourceDirectory(t *testing.T) {

@@ -4,6 +4,6 @@ use (
 	./agent
 	./agent-skill
 	./ai-sdk
-	./ai-tool-loop
 	./mcp-runtime
+	./tool-loop
 )

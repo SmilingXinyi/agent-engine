@@ -1,4 +1,4 @@
-module github.com/SmilingXinyi/agent-engine/ai-tool-loop
+module github.com/SmilingXinyi/agent-engine/tool-loop
 
 go 1.25.0
 

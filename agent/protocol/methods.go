@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	loopprot "github.com/SmilingXinyi/agent-engine/tool-loop/protocol"
 )
 
 func (request Request) Validate() error {
@@ -36,7 +36,7 @@ func validateHistory(history []aiprot.Message) error {
 			return fmt.Errorf("tool calls need results before message %d", index)
 		}
 		switch message.Role {
-		case aiprot.RoleSystem, aiprot.RoleUser, aiprot.RoleAssistant:
+		case aiprot.RoleSystem, aiprot.RoleDeveloper, aiprot.RoleUser, aiprot.RoleAssistant:
 		case aiprot.RoleTool:
 			if len(message.Parts) == 0 {
 				return fmt.Errorf("tool message %d has no results", index)
@@ -80,7 +80,13 @@ func validateHistory(history []aiprot.Message) error {
 // LoopRequest preserves prompt text, omits an empty user prompt, and snapshots
 // history and tool definitions before the caller's data enters the loop.
 func (request Request) LoopRequest() loopprot.Request {
-	result := loopprot.Request{Model: request.Model, Tools: request.Tools, Options: request.Options}
+	result := loopprot.Request{
+		Model: request.Model, Tools: request.Tools, Options: request.Options,
+		Temperature: request.Temperature, MaxOutputTokens: request.MaxOutputTokens,
+		ToolChoice: request.ToolChoice, Reasoning: request.Reasoning,
+		OutputFormat: request.OutputFormat, ProviderOptions: request.ProviderOptions,
+		Metadata: request.Metadata,
+	}
 	if request.SystemPrompt != "" {
 		result.Messages = append(result.Messages, aiprot.TextMessage(aiprot.RoleSystem, request.SystemPrompt))
 	}
