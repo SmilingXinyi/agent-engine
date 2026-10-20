@@ -30,6 +30,8 @@ fmt.Println(result.StopReason, result.Usage.TotalTokens, err)
 
 `Request.Tools` 接收 `[]protocol.Tool`，每个工具为 SDK `ToolDefinition` 加必填的 `Execute` 函数。输入消息、定义、参数、执行记录及 Hook 快照相互隔离；metadata 使用可复制的无环数据，函数、error 和不可见结构字段保持原值。
 
+每一步模型调用都会带上 `Temperature`、`MaxOutputTokens`、`ToolChoice`、`Reasoning`、`OutputFormat` 和 `ProviderOptions`。这些字段与 `ai-sdk` 的 `ModelRequest` 含义相同，循环不改写、不猜测别名。消息上的 `ProviderOptions` 和 `ContentProvider` 内容随消息原样进入后续调用；模型响应里的原生字段留在 `ModelResponse.Raw`，不会被写回请求扩展。`Metadata` 会复制到每一步，其中 `run_id`、`request_id`、`step` 由循环写入并覆盖同名调用方值。流式超时只作用于 SDK 的 `Stream` / `ChatStream`，本模块仍只使用非流式 `Generate`。
+
 ## 执行与停止
 
 流程为模型调用 → 校验整批工具调用 → 顺序执行 → 追加 assistant/tool 消息 → 再次调用模型。`MaxSteps` 包含最终回答，零值使用默认 10，负值无效。工具不会由循环自动重试。

@@ -68,6 +68,40 @@ func TestExecuteAcceptsHistoryWithoutUserPrompt(t *testing.T) {
 	}
 }
 
+func TestExecuteForwardsGenerationSettings(t *testing.T) {
+	temperature := 0.4
+	limit := 16
+	history := []aiprot.Message{aiprot.TextMessage(aiprot.RoleDeveloper, "rules")}
+	history[0].ProviderOptions = map[string]any{"vendor_extension": true}
+	request := protocol.Request{
+		Model: "model", History: history, UserPrompt: "hello",
+		Temperature: &temperature, MaxOutputTokens: &limit, ToolChoice: aiprot.ToolChoiceNone,
+		Reasoning:       &aiprot.ReasoningOptions{Effort: "low"},
+		OutputFormat:    &aiprot.OutputFormat{Type: aiprot.OutputJSON, Name: "answer"},
+		ProviderOptions: map[string]any{"thinking": map[string]any{"type": "disabled"}},
+		Metadata:        map[string]string{"trace": "abc", loopprot.MetadataRunID: "caller"},
+	}
+	assistant := agent.New(ai.NewClient(testProvider{generate: func(_ context.Context, modelRequest aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+		if modelRequest.Temperature == nil || *modelRequest.Temperature != temperature || modelRequest.MaxOutputTokens == nil || *modelRequest.MaxOutputTokens != limit || modelRequest.ToolChoice != aiprot.ToolChoiceNone {
+			t.Fatalf("scalars=%#v", modelRequest)
+		}
+		if modelRequest.Reasoning == nil || modelRequest.Reasoning.Effort != "low" || modelRequest.OutputFormat == nil || modelRequest.OutputFormat.Type != aiprot.OutputJSON || modelRequest.ProviderOptions["thinking"].(map[string]any)["type"] != "disabled" {
+			t.Fatalf("generation=%#v", modelRequest)
+		}
+		if modelRequest.Metadata["trace"] != "abc" || modelRequest.Metadata[loopprot.MetadataRunID] == "caller" || modelRequest.Messages[0].Role != aiprot.RoleDeveloper || modelRequest.Messages[0].ProviderOptions["vendor_extension"] != true {
+			t.Fatalf("metadata=%v messages=%#v", modelRequest.Metadata, modelRequest.Messages)
+		}
+		modelRequest.ProviderOptions["thinking"].(map[string]any)["type"] = "changed"
+		return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "done")}, nil
+	}}, aiprot.Hooks{}))
+	if _, err := assistant.Execute(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if request.ProviderOptions["thinking"].(map[string]any)["type"] != "disabled" {
+		t.Fatal("caller options were shared with the provider")
+	}
+}
+
 func TestExecuteReturnsPartialLoopResult(t *testing.T) {
 	failure := errors.New("provider failure")
 	assistant := agent.New(ai.NewClient(testProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {

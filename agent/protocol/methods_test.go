@@ -21,7 +21,7 @@ func TestHistoryRequiresCompleteMatchingToolBatches(t *testing.T) {
 	result := resultMessage("first", "lookup")
 	batch := callMessage("second", "other")
 	batch.Parts = append(call.Parts[:1:1], batch.Parts...)
-	valid := []aiprot.Message{aiprot.TextMessage(aiprot.RoleUser, "old"), batch, resultMessage("second", "other"), result, aiprot.TextMessage(aiprot.RoleAssistant, "done")}
+	valid := []aiprot.Message{aiprot.TextMessage(aiprot.RoleDeveloper, "rules"), aiprot.TextMessage(aiprot.RoleUser, "old"), batch, resultMessage("second", "other"), result, aiprot.TextMessage(aiprot.RoleAssistant, "done")}
 	request := protocol.Request{Model: "local", History: valid, UserPrompt: "next"}
 	before := request.LoopRequest().Messages
 	if err := request.Validate(); err != nil {
