@@ -133,7 +133,7 @@ func TestChatReturnsChatCompletionObject(t *testing.T) {
 	}
 }
 
-func TestChatStreamSendsNativeMessages(t *testing.T) {
+func TestStreamChatSendsNativeMessages(t *testing.T) {
 	provider := testProvider(t, Config{}, func(request *http.Request) (*http.Response, error) {
 		if request.Header.Get("Accept") != "text/event-stream" {
 			t.Errorf("accept = %q", request.Header.Get("Accept"))
@@ -151,7 +151,7 @@ func TestChatStreamSendsNativeMessages(t *testing.T) {
 		}
 		return testHTTPResponse(200, finalChat+"data: [DONE]\n\n"), nil
 	})
-	stream, err := provider.ChatStream(context.Background(), ChatRequest{
+	stream, err := provider.StreamChat(context.Background(), ChatRequest{
 		Model: "model-1",
 		Messages: []map[string]any{
 			{"role": "user", "content": "hi", "vendor_extension": true},
@@ -173,9 +173,9 @@ func TestChatStreamSendsNativeMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = responses.ChatStream(context.Background(), ChatRequest{Model: "m", Messages: []map[string]any{{"role": "user"}}})
+	_, err = responses.StreamChat(context.Background(), ChatRequest{Model: "m", Messages: []map[string]any{{"role": "user"}}})
 	requireFailure(t, err, protocol.ErrorUnsupported)
-	_, err = provider.ChatStream(context.Background(), ChatRequest{Model: "m"})
+	_, err = provider.StreamChat(context.Background(), ChatRequest{Model: "m"})
 	requireFailure(t, err, protocol.ErrorInvalidRequest)
 }
 

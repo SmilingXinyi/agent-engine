@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Rename `ChatStream` to `StreamChat`.
+
 ## v0.5.0 — 2026-10-19 — stream stall timeouts
 
 - Add `FirstFrameTimeout` and `IdleTimeout` on `openai.Config`, `protocol.ModelRequest`,

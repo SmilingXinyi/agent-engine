@@ -9,11 +9,11 @@
 要求 Go 1.25+，只有标准库依赖。
 
 使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.5.0` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.5.0`。这一版为 `Stream` 和 `ChatStream` 增加
+Go 子模块发布标签为 `ai-sdk/v0.5.0`。这一版为 `Stream` 和 `StreamChat` 增加
 `FirstFrameTimeout` 与 `IdleTimeout`，零值关闭。超时返回 `ErrorTimeout`，并用
 `TimeoutKind` 区分 `first_frame` 和 `idle`。`Generate` 与 `Chat` 不使用这两项。
 `openai.Accumulator` 仍把 Chat Completions 的 SSE `data` 拼成一份 `chat.completion`。
-`ChatStream` 仍返回原始帧，原生消息仍放在 `ChatRequest.Messages`。`Chat` 继续负责非流式
+`StreamChat` 仍返回原始帧，原生消息仍放在 `ChatRequest.Messages`。`Chat` 继续负责非流式
 `chat.completion`。本地开发可以在调用项目的 `go.work` 中引用此模块，或通过 `go.mod` 的
 `replace` 指向本地 `ai-sdk` 目录。
 
@@ -237,7 +237,7 @@ return stream.Err()
 `protocol.ModelRequest` 的 `[]Message` 混在同一个字段里。
 
 `Chat` 是非流式调用，返回 `map[string]any`，`object` 为 `chat.completion`，未知字段保留。
-`ChatStream` 强制 `stream: true`，按原始 SSE 帧返回，用法与 `Stream` 的 reader 相同。
+`StreamChat` 强制 `stream: true`，按原始 SSE 帧返回，用法与 `Stream` 的 reader 相同。
 两者都不注入 `stream_options`。`Chat` 在 `Stream` 为 true 时拒绝。
 
 ```go
@@ -248,7 +248,7 @@ response, err := provider.Chat(ctx, openai.ChatRequest{
     },
 })
 
-stream, err := provider.ChatStream(ctx, openai.ChatRequest{
+stream, err := provider.StreamChat(ctx, openai.ChatRequest{
     Model: "your-model",
     Messages: []map[string]any{
         {"role": "user", "content": "你好"},
@@ -307,7 +307,7 @@ Hook 参数的消息、JSON 扩展、headers 和 Stream 摘要均为独立快照
 | MaxStreamBytes | 0，不限制累计流字节 |
 | MaxEventBytes | 1 MiB，单个 SSE 帧，包含换行和其他 framing |
 | RequireDone | false，只影响 Chat Completions |
-| FirstFrameTimeout | 0，关闭。只用于 Stream / ChatStream，等待第一个非空 data 帧 |
+| FirstFrameTimeout | 0，关闭。只用于 Stream / StreamChat，等待第一个非空 data 帧 |
 | IdleTimeout | 0，关闭。见过非空 data 之后，限制 Next 里的下一次等待 |
 
 注入 `HTTPClient` 时由它决定 transport 和超时，不能同时配置 `ResponseHeaderTimeout`。

@@ -11,11 +11,11 @@ Install v0.5.0 with:
 go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.5.0
 ```
 
-v0.5.0 adds `FirstFrameTimeout` and `IdleTimeout` for `Stream` and `ChatStream`.
+v0.5.0 adds `FirstFrameTimeout` and `IdleTimeout` for `Stream` and `StreamChat`.
 Zero disables a timer. A stall returns `ErrorTimeout` with `TimeoutKind`
 `first_frame` or `idle`. `Generate` and `Chat` ignore these timers.
 `openai.Accumulator` still folds Chat Completions SSE data into one
-`chat.completion` object, and `ChatStream` still returns the original frames.
+`chat.completion` object, and `StreamChat` still returns the original frames.
 Go submodule release tags use `ai-sdk/vX.Y.Z`. See [CHANGELOG](CHANGELOG.md)
 for the migration notes. Local development can use a Go workspace or a
 `replace` directive.

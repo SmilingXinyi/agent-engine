@@ -90,14 +90,14 @@ func TestStreamTimeoutOverrideInheritsDisablesAndReplaces(t *testing.T) {
 	}
 }
 
-func TestChatStreamUsesRequestTimeout(t *testing.T) {
+func TestStreamChatUsesRequestTimeout(t *testing.T) {
 	limit := 30 * time.Millisecond
 	provider := testProvider(t, Config{FirstFrameTimeout: time.Second}, func(request *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &frameBody{ctx: request.Context(), frames: []timedFrame{
 			{delay: 80 * time.Millisecond, data: finalChat},
 		}}}, nil
 	})
-	stream, err := provider.ChatStream(context.Background(), ChatRequest{
+	stream, err := provider.StreamChat(context.Background(), ChatRequest{
 		Model: "m", Messages: []map[string]any{{"role": "user", "content": "hi"}}, FirstFrameTimeout: &limit,
 	})
 	if err != nil {
