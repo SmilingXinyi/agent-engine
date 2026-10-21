@@ -5,17 +5,17 @@ contract; `Generate` returns a normalized result and `Stream` delivers original
 SSE frames. The OpenAI-compatible provider supports Chat Completions and Responses.
 The SDK does not execute tools or manage conversations.
 
-Install v0.5.0 with:
+Install v0.6.0 with:
 
 ```sh
-go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.5.0
+go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.6.0
 ```
 
-v0.5.0 adds `FirstFrameTimeout` and `IdleTimeout` for `Stream` and `StreamChat`.
-Zero disables a timer. A stall returns `ErrorTimeout` with `TimeoutKind`
-`first_frame` or `idle`. `Generate` and `Chat` ignore these timers.
-`openai.Accumulator` still folds Chat Completions SSE data into one
-`chat.completion` object, and `StreamChat` still returns the original frames.
+v0.6.0 renames `ChatStream` to `StreamChat`. `FirstFrameTimeout` and `IdleTimeout`
+still apply to `Stream` and `StreamChat`. Zero disables a timer. A stall returns
+`ErrorTimeout` with `TimeoutKind` `first_frame` or `idle`. `Generate` and `Chat`
+ignore these timers. `openai.Accumulator` still folds Chat Completions SSE data
+into one `chat.completion` object, and `StreamChat` still returns the original frames.
 Go submodule release tags use `ai-sdk/vX.Y.Z`. See [CHANGELOG](CHANGELOG.md)
 for the migration notes. Local development can use a Go workspace or a
 `replace` directive.

@@ -8,14 +8,14 @@
 
 要求 Go 1.25+，只有标准库依赖。
 
-使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.5.0` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.5.0`。这一版为 `Stream` 和 `StreamChat` 增加
-`FirstFrameTimeout` 与 `IdleTimeout`，零值关闭。超时返回 `ErrorTimeout`，并用
-`TimeoutKind` 区分 `first_frame` 和 `idle`。`Generate` 与 `Chat` 不使用这两项。
-`openai.Accumulator` 仍把 Chat Completions 的 SSE `data` 拼成一份 `chat.completion`。
-`StreamChat` 仍返回原始帧，原生消息仍放在 `ChatRequest.Messages`。`Chat` 继续负责非流式
-`chat.completion`。本地开发可以在调用项目的 `go.work` 中引用此模块，或通过 `go.mod` 的
-`replace` 指向本地 `ai-sdk` 目录。
+使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.6.0` 固定版本。
+Go 子模块发布标签为 `ai-sdk/v0.6.0`。这一版把 `ChatStream` 改名为 `StreamChat`。
+`FirstFrameTimeout` 与 `IdleTimeout` 仍作用于 `Stream` 和 `StreamChat`，零值关闭。
+超时返回 `ErrorTimeout`，并用 `TimeoutKind` 区分 `first_frame` 和 `idle`。
+`Generate` 与 `Chat` 不使用这两项。`openai.Accumulator` 仍把 Chat Completions 的 SSE `data`
+拼成一份 `chat.completion`。`StreamChat` 仍返回原始帧，原生消息仍放在 `ChatRequest.Messages`。
+`Chat` 继续负责非流式 `chat.completion`。本地开发可以在调用项目的 `go.work` 中引用此模块，
+或通过 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
 
 - `protocol/types.go`：公共类型、接口和常量，包括错误、hooks 和能力说明。
 - `protocol/methods.go`：消息构造、结果提取、快照复制和错误链行为。
