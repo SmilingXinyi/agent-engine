@@ -143,6 +143,13 @@ type ModelRequest struct {
 	// collisions with common fields; they must not guess or translate aliases.
 	ProviderOptions map[string]any    `json:"provider_options,omitempty"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
+	// FirstFrameTimeout and IdleTimeout override a streaming provider's defaults.
+	// Nil inherits the provider value. Zero disables that timer for this call.
+	// The first-frame clock starts on the first Next and keeps running across
+	// comments and empty data. Idle applies after the first non-empty data frame,
+	// to each later wait inside Next. Generate ignores both.
+	FirstFrameTimeout *time.Duration `json:"-"`
+	IdleTimeout       *time.Duration `json:"-"`
 }
 
 // ModelResponse is the provider-neutral result of one model call.
@@ -207,16 +214,28 @@ const (
 	ErrorSink             ErrorCode = "sink"
 )
 
+// TimeoutKind distinguishes a stream stall from a caller deadline. It is empty
+// for every error that is not a first-frame or idle timeout.
+type TimeoutKind string
+
+const (
+	TimeoutFirstFrame TimeoutKind = "first_frame"
+	TimeoutIdle       TimeoutKind = "idle"
+)
+
 // Error preserves classification and the underlying error chain. Retryable
 // identifies a transient failure; it never authorizes replaying emitted output.
+// A first-frame timeout is retryable. An idle timeout is not, because frames
+// may already have been delivered.
 type Error struct {
-	Code      ErrorCode
-	Provider  string
-	Message   string
-	Retryable bool
-	CallInfo  CallInfo
-	Body      []byte
-	Cause     error
+	Code        ErrorCode
+	Provider    string
+	Message     string
+	Retryable   bool
+	TimeoutKind TimeoutKind
+	CallInfo    CallInfo
+	Body        []byte
+	Cause       error
 }
 
 // Capabilities describes an adapter's encodings, not what every upstream model

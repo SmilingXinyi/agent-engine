@@ -11,6 +11,13 @@ import (
 
 const DefaultMaxSteps = 10
 
+const (
+	// MetadataRunID identifies one execution on every model call.
+	MetadataRunID = "run_id"
+	// MetadataStep is the 1-based model-call index on every model call.
+	MetadataStep = "step"
+)
+
 // StopReason describes why execution ended, not whether a business task succeeded.
 type StopReason string
 
@@ -26,11 +33,22 @@ type Tool struct {
 	Execute    func(context.Context, json.RawMessage) (aiprot.ToolResult, error)
 }
 
+// Request is one sequential execution. Generation settings are copied onto
+// every model call. Message.ProviderOptions travel with Messages.
+// MetadataRunID, MetadataStep, and the SDK request ID are reserved and
+// overwritten for each call.
 type Request struct {
-	Model    string
-	Messages []aiprot.Message
-	Tools    []Tool
-	Options  RunOptions
+	Model           string
+	Messages        []aiprot.Message
+	Tools           []Tool
+	Temperature     *float64
+	MaxOutputTokens *int
+	ToolChoice      aiprot.ToolChoice
+	Reasoning       *aiprot.ReasoningOptions
+	OutputFormat    *aiprot.OutputFormat
+	ProviderOptions map[string]any
+	Metadata        map[string]string
+	Options         RunOptions
 }
 
 type RunOptions struct {

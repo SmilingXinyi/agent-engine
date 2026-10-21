@@ -5,16 +5,20 @@ contract; `Generate` returns a normalized result and `Stream` delivers original
 SSE frames. The OpenAI-compatible provider supports Chat Completions and Responses.
 The SDK does not execute tools or manage conversations.
 
-Install v0.3.6 with:
+Install v0.5.0 with:
 
 ```sh
-go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.6
+go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.5.0
 ```
 
-v0.3.6 adds `StreamChat` for native Chat Completions messages. `Chat` remains the
-non-streaming object call. Go submodule release tags use `ai-sdk/vX.Y.Z`. See
-[CHANGELOG](CHANGELOG.md) for the migration notes. Local development can use a
-Go workspace or a `replace` directive.
+v0.5.0 adds `FirstFrameTimeout` and `IdleTimeout` for `Stream` and `StreamChat`.
+Zero disables a timer. A stall returns `ErrorTimeout` with `TimeoutKind`
+`first_frame` or `idle`. `Generate` and `Chat` ignore these timers.
+`openai.Accumulator` still folds Chat Completions SSE data into one
+`chat.completion` object, and `StreamChat` still returns the original frames.
+Go submodule release tags use `ai-sdk/vX.Y.Z`. See [CHANGELOG](CHANGELOG.md)
+for the migration notes. Local development can use a Go workspace or a
+`replace` directive.
 
 Requires Go 1.25+, with only standard-library dependencies. Verify independently:
 
@@ -58,8 +62,9 @@ return stream.Err()
 ```
 
 Import `errors` for the example. There is no sink, producer goroutine, channel,
-semantic event splitting, or accumulated response. This release does not add a
-normalizer or collector. `Generate` remains available for the normalized result.
+or semantic event splitting. The reader does not accumulate a response.
+`openai.Accumulator` is optional and only folds Chat Completions `data` payloads.
+`Generate` remains available for the normalized result.
 
 - Each successful `Next()` exposes one original SSE frame via `Chunk()`.
   `Frame` preserves exact bytes, including delimiters, comments, empty frames,
@@ -73,6 +78,13 @@ normalizer or collector. `Generate` remains available for the normalized result.
 - Chat Completions delivers `[DONE]` before stopping. By default, an explicit
   finish reason followed by clean EOF also succeeds; `RequireDone` can require
   the sentinel. A finish reason alone does not stop reading subsequent usage.
+- `FirstFrameTimeout` waits until the first SSE frame with non-empty data.
+  Comments and blank data do not satisfy it or reset its deadline. `IdleTimeout`
+  then bounds each later wait inside `Next` and starts again after any frame.
+  Time spent between `Next` calls does not count as idle. Zero disables a timer.
+  A nil request override inherits the provider value. A stall returns
+  `ErrorTimeout`; `TimeoutKind` is `first_frame` or `idle`. Only the first-frame
+  timeout is retryable. `Generate` and `Chat` do not arm these timers.
 - Responses delivers its completed/incomplete terminal frame before stopping.
   A bare `[DONE]` is visible but reports `ErrorStreamIncomplete`. Known upstream
   failure frames are visible before `Err()` reports `ErrorUpstream`. Unknown or

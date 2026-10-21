@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 )
 
 func TestStructuredErrorPreservesClassificationAndCause(t *testing.T) {
@@ -19,12 +20,14 @@ func TestStructuredErrorPreservesClassificationAndCause(t *testing.T) {
 
 func TestRequestCloneIsolatesNestedContentAndOptions(t *testing.T) {
 	temperature := 0.5
+	firstFrame := 20 * time.Millisecond
 	request := ModelRequest{
-		Temperature:     &temperature,
-		Messages:        []Message{{Role: RoleUser, Parts: []ContentPart{{Type: ContentProvider, Data: json.RawMessage(`{"type":"vendor"}`), Metadata: map[string]any{"nested": map[string]any{"value": "original"}}}}}},
-		Tools:           []ToolDefinition{{Name: "tool", InputSchema: json.RawMessage(`{"type":"object"}`)}},
-		ProviderOptions: map[string]any{"nested": []any{map[string]any{"value": "original"}}},
-		OutputFormat:    &OutputFormat{Type: OutputJSONSchema, Name: "result", Schema: json.RawMessage(`{"type":"object"}`)},
+		Temperature:       &temperature,
+		FirstFrameTimeout: &firstFrame,
+		Messages:          []Message{{Role: RoleUser, Parts: []ContentPart{{Type: ContentProvider, Data: json.RawMessage(`{"type":"vendor"}`), Metadata: map[string]any{"nested": map[string]any{"value": "original"}}}}}},
+		Tools:             []ToolDefinition{{Name: "tool", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		ProviderOptions:   map[string]any{"nested": []any{map[string]any{"value": "original"}}},
+		OutputFormat:      &OutputFormat{Type: OutputJSONSchema, Name: "result", Schema: json.RawMessage(`{"type":"object"}`)},
 	}
 	clone := request.Clone()
 	clone.Messages[0].Parts[0].Data[0] = 'x'
@@ -33,7 +36,8 @@ func TestRequestCloneIsolatesNestedContentAndOptions(t *testing.T) {
 	clone.Tools[0].InputSchema[0] = 'x'
 	clone.OutputFormat.Schema[0] = 'x'
 	*clone.Temperature = 1
-	if !json.Valid(request.Messages[0].Parts[0].Data) || !json.Valid(request.Tools[0].InputSchema) || !json.Valid(request.OutputFormat.Schema) || *request.Temperature != 0.5 || request.ProviderOptions["nested"].([]any)[0].(map[string]any)["value"] != "original" || request.Messages[0].Parts[0].Metadata["nested"].(map[string]any)["value"] != "original" {
+	*clone.FirstFrameTimeout = time.Second
+	if !json.Valid(request.Messages[0].Parts[0].Data) || !json.Valid(request.Tools[0].InputSchema) || !json.Valid(request.OutputFormat.Schema) || *request.Temperature != 0.5 || *request.FirstFrameTimeout != 20*time.Millisecond || request.ProviderOptions["nested"].([]any)[0].(map[string]any)["value"] != "original" || request.Messages[0].Parts[0].Metadata["nested"].(map[string]any)["value"] != "original" {
 		t.Fatalf("clone mutated source: %#v", request)
 	}
 }

@@ -8,10 +8,14 @@
 
 要求 Go 1.25+，只有标准库依赖。
 
-使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.3.6` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.3.6`。这一版新增 `StreamChat`，原生消息仍放在
-`ChatRequest.Messages`。`Chat` 继续负责非流式 `chat.completion`。本地开发可以在调用项目的
-`go.work` 中引用此模块，或通过 `go.mod` 的 `replace` 指向本地 `ai-sdk` 目录。
+使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.5.0` 固定版本。
+Go 子模块发布标签为 `ai-sdk/v0.5.0`。这一版为 `Stream` 和 `StreamChat` 增加
+`FirstFrameTimeout` 与 `IdleTimeout`，零值关闭。超时返回 `ErrorTimeout`，并用
+`TimeoutKind` 区分 `first_frame` 和 `idle`。`Generate` 与 `Chat` 不使用这两项。
+`openai.Accumulator` 仍把 Chat Completions 的 SSE `data` 拼成一份 `chat.completion`。
+`StreamChat` 仍返回原始帧，原生消息仍放在 `ChatRequest.Messages`。`Chat` 继续负责非流式
+`chat.completion`。本地开发可以在调用项目的 `go.work` 中引用此模块，或通过 `go.mod` 的
+`replace` 指向本地 `ai-sdk` 目录。
 
 - `protocol/types.go`：公共类型、接口和常量，包括错误、hooks 和能力说明。
 - `protocol/methods.go`：消息构造、结果提取、快照复制和错误链行为。
@@ -254,6 +258,12 @@ stream, err := provider.StreamChat(ctx, openai.ChatRequest{
 
 `Generate` 和 `Stream` 仍使用 `protocol.ModelRequest`。`Generate` 的 `Raw` 保留上游原始响应 JSON，包括未知字段。
 
+流本身不累计正文。需要把 Chat Completions 的 `data` 拼回去时，使用 `openai.Accumulator`：
+`Add` 接收每一帧的 `Data`，`[DONE]` 和空数据会被忽略，坏 JSON 返回错误。`Finished` 表示见过非空
+`finish_reason`，之后的 usage 帧仍应继续 `Add`。`Completion` 返回 `object` 为 `chat.completion` 的对象，
+`usage` 保留全部字段。`Usage` 只返回 `prompt_tokens` 和 `completion_tokens`，缺省为 0。
+只读取 `choices[0]`，不处理 `tool_calls`。它不会改变 `Stream` 或 `Info().Complete`。
+
 ## 错误和观测
 
 ```go
@@ -297,10 +307,15 @@ Hook 参数的消息、JSON 扩展、headers 和 Stream 摘要均为独立快照
 | MaxStreamBytes | 0，不限制累计流字节 |
 | MaxEventBytes | 1 MiB，单个 SSE 帧，包含换行和其他 framing |
 | RequireDone | false，只影响 Chat Completions |
+| FirstFrameTimeout | 0，关闭。只用于 Stream / StreamChat，等待第一个非空 data 帧 |
+| IdleTimeout | 0，关闭。见过非空 data 之后，限制 Next 里的下一次等待 |
 
 注入 `HTTPClient` 时由它决定 transport 和超时，不能同时配置 `ResponseHeaderTimeout`。
-后者不限制响应体读取，也不充当首个事件或流中空闲时限；这些需求由调用方的 context
-或自定义 client/transport 实现。配置中的负数均为错误，不用负值表达“关闭”。
+响应头超时不限制响应体读取。流式的首帧和空闲时限用上面两项，不替代调用方 context 的总时限。
+注释帧和空 data 不会结束首帧等待，也不会把首帧截止时间往后推。空闲计时在每个非空 data 帧之后、
+下一次 `Next` 阻塞时重新开始，两次 `Next` 之间的调用方处理时间不算空闲。
+`ModelRequest` 和 `ChatRequest` 上的对应指针：`nil` 沿用 Provider，`0` 关闭这一次，正数覆盖。
+首帧超时的 `Retryable` 为真，空闲超时为假。`Generate` 和 `Chat` 忽略这两项。配置中的负数均为错误，不用负值表达“关闭”。
 
 需要重试时显式配置 `Retry: openai.RetryPolicy{MaxRetries: 2}`。仅对暂时性网络错误和
 HTTP 408、429、5xx 进行重试；永久错误及已取消的 context 不重试。HTTP `Retry-After`

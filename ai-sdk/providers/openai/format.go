@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	protocol "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
@@ -18,6 +19,11 @@ type ChatRequest struct {
 	// Options holds the other top-level fields. model, messages, and stream
 	// always come from the struct fields above.
 	Options map[string]any
+	// FirstFrameTimeout and IdleTimeout override Config for StreamChat.
+	// Nil inherits the provider value. Zero disables that timer for this call.
+	// Chat ignores them. Payload does not send them upstream.
+	FirstFrameTimeout *time.Duration
+	IdleTimeout       *time.Duration
 }
 
 // Payload copies Options and then sets model, messages, and stream.

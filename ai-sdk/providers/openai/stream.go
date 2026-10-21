@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
@@ -23,12 +25,46 @@ func (provider *Provider) Stream(ctx context.Context, request protocol.ModelRequ
 	if err != nil {
 		return nil, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
 	}
-	return provider.openSSE(ctx, encoded)
+	timeouts, err := provider.streamTimeouts(request.FirstFrameTimeout, request.IdleTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return provider.openSSE(ctx, encoded, timeouts)
+}
+
+// streamTimeouts resolves one call's timers. A nil override inherits the provider
+// default. Zero disables that timer. Negative values are rejected.
+func (provider *Provider) streamTimeouts(firstFrame, idle *time.Duration) (streamTimeouts, error) {
+	resolvedFirst, err := resolveStreamTimeout(firstFrame, provider.firstFrameTimeout)
+	if err != nil {
+		return streamTimeouts{}, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	resolvedIdle, err := resolveStreamTimeout(idle, provider.idleTimeout)
+	if err != nil {
+		return streamTimeouts{}, provider.failure(err, protocol.ErrorInvalidRequest, protocol.CallInfo{})
+	}
+	return streamTimeouts{firstFrame: resolvedFirst, idle: resolvedIdle}, nil
+}
+
+func resolveStreamTimeout(override *time.Duration, fallback time.Duration) (time.Duration, error) {
+	value := fallback
+	if override != nil {
+		value = *override
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("stream timeout must be nonnegative")
+	}
+	return value, nil
+}
+
+type streamTimeouts struct {
+	firstFrame time.Duration
+	idle       time.Duration
 }
 
 // openSSE sends one streaming body and returns the frame reader. The body is
 // not read until Next.
-func (provider *Provider) openSSE(ctx context.Context, body []byte) (protocol.Stream, error) {
+func (provider *Provider) openSSE(ctx context.Context, body []byte, timeouts streamTimeouts) (protocol.Stream, error) {
 	streamContext, cancel := context.WithCancel(ctx)
 	response, info, err := provider.send(streamContext, body, true)
 	if err != nil {
@@ -40,50 +76,68 @@ func (provider *Provider) openSSE(ctx context.Context, body []byte) (protocol.St
 		return nil, errors.Join(err, response.Body.Close())
 	}
 	return &responseStream{
-		provider: provider, ctx: streamContext, cancel: cancel, body: response.Body,
-		reader: sseReader{reader: bufio.NewReader(response.Body), maxFrame: provider.maxEventBytes, maxTotal: provider.maxStreamBytes, first: true},
-		info:   protocol.StreamInfo{CallInfo: info},
+		provider: provider, caller: ctx, ctx: streamContext, cancel: cancel, body: response.Body,
+		reader:            sseReader{reader: bufio.NewReader(response.Body), maxFrame: provider.maxEventBytes, maxTotal: provider.maxStreamBytes, first: true},
+		info:              protocol.StreamInfo{CallInfo: info},
+		firstFrameTimeout: timeouts.firstFrame,
+		idleTimeout:       timeouts.idle,
 	}, nil
 }
 
 // Only Next touches the reader. The mutex protects publication and terminal
-// state, never a blocking Read, so Close can interrupt Next without a goroutine.
+// state, never a blocking Read, so Close can interrupt Next without holding it
+// across the read. A timer goroutine may cancel that read.
 type responseStream struct {
-	provider        *Provider
-	ctx             context.Context
-	cancel          context.CancelFunc
-	body            io.ReadCloser
-	reader          sseReader
-	mu              sync.Mutex
-	chunk           protocol.StreamChunk
-	info            protocol.StreamInfo
-	err             error
-	hasFinishReason bool
-	closeOnce       sync.Once
-	closeErr        error
+	provider           *Provider
+	caller             context.Context
+	ctx                context.Context
+	cancel             context.CancelFunc
+	body               io.ReadCloser
+	reader             sseReader
+	mu                 sync.Mutex
+	chunk              protocol.StreamChunk
+	info               protocol.StreamInfo
+	err                error
+	hasFinishReason    bool
+	closeOnce          sync.Once
+	closeErr           error
+	firstFrameTimeout  time.Duration
+	idleTimeout        time.Duration
+	firstFrameDeadline time.Time
+	sawData            bool
+	readID             int
+	readWaiting        bool
+	timeoutKind        protocol.TimeoutKind
 }
 
 func (stream *responseStream) Next() bool {
 	stream.mu.Lock()
 	stream.chunk = protocol.StreamChunk{}
 	ended := stream.endedLocked()
+	limit, kind := stream.readTimeoutLocked()
 	stream.mu.Unlock()
+
 	var chunk protocol.StreamChunk
 	var readErr error
-	if !ended {
+	if !ended && limit == 0 && kind == protocol.TimeoutFirstFrame {
+		readErr = stream.timeoutError(kind)
+	} else if !ended {
+		stop := stream.watch(limit, kind)
 		chunk, readErr = stream.reader.next(stream.ctx)
+		stop()
 	}
 
 	hasChunk := false
 	stream.mu.Lock()
 	if !stream.endedLocked() {
-		if stream.ctx.Err() != nil {
-			readErr = stream.ctx.Err()
-		}
+		readErr = stream.classifyReadErrorLocked(readErr)
 		if readErr != nil {
 			stream.endLocked(false, readErr)
 		} else {
 			stream.chunk, hasChunk = chunk, true
+			if len(bytes.TrimSpace(chunk.Data)) > 0 {
+				stream.sawData = true
+			}
 			if terminal, complete, err := stream.inspect(chunk); terminal {
 				stream.endLocked(complete, err)
 			}
@@ -95,6 +149,95 @@ func (stream *responseStream) Next() bool {
 		_ = stream.closeBody()
 	}
 	return hasChunk
+}
+
+// readTimeoutLocked reports the timer for the read that is about to start.
+// A zero limit with an empty kind means the timer is disabled. A zero limit
+// with TimeoutFirstFrame means the first-frame deadline has already passed.
+// The caller holds mu.
+func (stream *responseStream) readTimeoutLocked() (time.Duration, protocol.TimeoutKind) {
+	if stream.sawData {
+		if stream.idleTimeout <= 0 {
+			return 0, ""
+		}
+		return stream.idleTimeout, protocol.TimeoutIdle
+	}
+	if stream.firstFrameTimeout <= 0 {
+		return 0, ""
+	}
+	if stream.firstFrameDeadline.IsZero() {
+		stream.firstFrameDeadline = time.Now().Add(stream.firstFrameTimeout)
+	}
+	remaining := time.Until(stream.firstFrameDeadline)
+	if remaining <= 0 {
+		return 0, protocol.TimeoutFirstFrame
+	}
+	return remaining, protocol.TimeoutFirstFrame
+}
+
+// watch cancels the stream read when limit elapses. A non-positive limit does
+// not start a timer. stop invalidates the callback so a frame that arrived in
+// time is not turned into a timeout.
+func (stream *responseStream) watch(limit time.Duration, kind protocol.TimeoutKind) func() {
+	if limit <= 0 || kind == "" {
+		return func() {}
+	}
+	stream.mu.Lock()
+	stream.readID++
+	readID := stream.readID
+	stream.readWaiting = true
+	stream.mu.Unlock()
+	timer := time.AfterFunc(limit, func() {
+		stream.mu.Lock()
+		if stream.readID != readID || !stream.readWaiting || stream.endedLocked() {
+			stream.mu.Unlock()
+			return
+		}
+		stream.readWaiting = false
+		stream.timeoutKind = kind
+		stream.mu.Unlock()
+		stream.cancel()
+	})
+	return func() {
+		timer.Stop()
+		stream.mu.Lock()
+		if stream.readID == readID {
+			stream.readWaiting = false
+		}
+		stream.mu.Unlock()
+	}
+}
+
+// classifyReadErrorLocked prefers the caller's context over a stream timer.
+// A frame that was read completely is kept; the caller passes a nil read error
+// only when this returns nil. The caller holds mu.
+func (stream *responseStream) classifyReadErrorLocked(readErr error) error {
+	if stream.caller.Err() != nil {
+		return stream.caller.Err()
+	}
+	if readErr == nil {
+		return nil
+	}
+	if stream.timeoutKind != "" {
+		return stream.timeoutError(stream.timeoutKind)
+	}
+	if stream.ctx.Err() != nil {
+		return stream.ctx.Err()
+	}
+	return readErr
+}
+
+func (stream *responseStream) timeoutError(kind protocol.TimeoutKind) error {
+	message := "timed out waiting for the next SSE frame"
+	if kind == protocol.TimeoutFirstFrame {
+		message = "timed out waiting for the first SSE data frame"
+	}
+	return &protocol.Error{
+		Code:        protocol.ErrorTimeout,
+		Message:     message,
+		Retryable:   kind == protocol.TimeoutFirstFrame,
+		TimeoutKind: kind,
+	}
 }
 
 func (stream *responseStream) Chunk() protocol.StreamChunk {

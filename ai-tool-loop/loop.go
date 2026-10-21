@@ -4,7 +4,6 @@ package aitoolloop
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -88,13 +87,7 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 	if err != nil {
 		return true, err
 	}
-	modelRequest := aiprot.ModelRequest{
-		Model: request.Model, Messages: utils.Clone(result.Messages),
-		Metadata: map[string]string{"run_id": result.RunID, aiprot.RequestIDMetadataKey: requestID, "step": strconv.Itoa(step)},
-	}
-	for _, tool := range request.Tools {
-		modelRequest.Tools = append(modelRequest.Tools, utils.Clone(tool.Definition))
-	}
+	modelRequest := request.ModelCall(result.Messages, result.RunID, requestID, step)
 	index := len(result.Steps)
 	result.Steps = append(result.Steps, protocol.StepResult{Step: step, RequestID: requestID, StartedAt: time.Now()})
 	toolStart := len(result.ToolCalls)
