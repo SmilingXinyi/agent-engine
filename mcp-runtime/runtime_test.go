@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,9 +29,28 @@ import (
 const helperServerEnv = "AGENT_ENGINE_MCP_TEST_SERVER"
 
 func TestMain(tests *testing.M) {
+	if mode := os.Getenv(helperServerEnv); mode == "wait-for-term" || mode == "ignore-term" {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGTERM)
+		fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"ready"}`)
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		for {
+			<-signals
+			if mode == "wait-for-term" {
+				return
+			}
+		}
+	}
 	if os.Getenv(helperServerEnv) == "1" {
 		server := sdk.NewServer(&sdk.Implementation{Name: "stdio-test", Version: "1.0.0"}, nil)
 		server.AddTool(&sdk.Tool{Name: "echo", InputSchema: json.RawMessage(`{"type":"object"}`)}, func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			if size := os.Getenv("MCP_TEST_RESPONSE_BYTES"); size != "" {
+				length, err := strconv.Atoi(size)
+				if err != nil {
+					return nil, err
+				}
+				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: strings.Repeat("x", length)}}}, nil
+			}
 			directory, err := os.Getwd()
 			if err != nil {
 				return nil, err

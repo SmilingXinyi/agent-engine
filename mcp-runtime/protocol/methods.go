@@ -86,6 +86,9 @@ func (config Config) Validate() error {
 			return fmt.Errorf("invalid MCP server name %q", name)
 		}
 		server := config.Servers[name]
+		if server.MaxLineLength < 0 {
+			return fmt.Errorf("MCP server %q maxLineLength must be nonnegative", name)
+		}
 		for _, toolName := range server.DisabledTools {
 			if strings.TrimSpace(toolName) == "" || strings.TrimSpace(toolName) != toolName {
 				return fmt.Errorf("MCP server %q disabled tool names must not be empty or have surrounding whitespace", name)
@@ -100,6 +103,9 @@ func (config Config) Validate() error {
 			return fmt.Errorf("MCP server %q must configure exactly one of command or url", name)
 		}
 		if hasURL {
+			if server.MaxLineLength != 0 {
+				return fmt.Errorf("MCP server %q maxLineLength is only supported for stdio", name)
+			}
 			parsed, err := url.Parse(server.URL)
 			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 				return fmt.Errorf("MCP server %q requires an HTTP or HTTPS URL", name)

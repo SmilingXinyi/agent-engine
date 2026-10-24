@@ -20,6 +20,9 @@ type ServerConfig struct {
 	Args          []string          `json:"args,omitempty"`
 	Env           map[string]string `json:"env,omitempty"`
 	Dir           string            `json:"dir,omitempty"`
+	// MaxLineLength limits inbound stdio JSON-RPC frames in bytes. Zero uses
+	// the SDK default (16 MiB). Negative values are rejected.
+	MaxLineLength int               `json:"maxLineLength,omitempty"`
 	URL           string            `json:"url,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
 	HTTPClient    *http.Client      `json:"-"`

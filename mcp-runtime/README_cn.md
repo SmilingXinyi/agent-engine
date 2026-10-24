@@ -64,7 +64,7 @@ func main() {
 }
 ```
 
-stdio 的 `Env` 会覆盖继承的环境变量，`Dir` 指定子进程工作目录。远程服务器配置如下：
+stdio 的 `Env` 会覆盖继承的环境变量，`Dir` 指定子进程工作目录。`MaxLineLength` 设置单条入站 JSON-RPC 消息的字节上限；省略或为 `0` 时使用 SDK 默认值（16 MiB），负数会被拒绝。该参数仅支持 stdio，不能用于 Streamable HTTP。连接关闭时先关闭子进程 stdin，等待 5 秒；仍未退出则发送 SIGTERM，再等待 5 秒后强制终止并回收子进程。远程服务器配置如下：
 
 ```go
 config := mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
@@ -86,6 +86,7 @@ config := mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
       "disabledTools": ["write_file", "edit_file"],
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/workspace"],
+      "maxLineLength": 67108864,
       "env": {},
       "dir": "/tmp"
     },
@@ -109,6 +110,7 @@ config := mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
 | `args` | 命令参数字符串数组，可省略 |
 | `env` | 子进程环境变量覆盖，值为字符串，可省略 |
 | `dir` | 子进程工作目录，可省略；相对路径基于当前进程工作目录 |
+| `maxLineLength` | stdio 单条入站消息上限，单位为字节；`0` 或省略使用默认 16 MiB，`67108864` 为 64 MiB；不允许负数 |
 | `url` | Streamable HTTP 地址，仅接受 HTTP / HTTPS |
 | `headers` | HTTP 请求头，值为字符串，可省略 |
 
@@ -130,6 +132,8 @@ defer runtime.Close()
 已有 JSON 字符串可继续使用 `mcpprot.ParseConfig(content)`。两个函数只读取、解析和校验配置，不连接服务器或执行命令。解析兼容旧顶层字段 `servers`，但不能与 `mcpServers` 同时出现；缺少顶层对象、未知字段和字段类型错误会返回错误。显式的 `{"mcpServers":{}}` 表示不启用任何服务器。
 
 JSON 字符串按原样读取，不展开 `${ENV_VAR}`。`ServerConfig.HTTPClient` 仅通过 Go 代码配置，可注入代理、TLS 和超时策略。
+
+通过 `command` 启动、再使用 `--remote` 连接桌面服务的 MCP，客户端与本地子进程之间仍是 stdio，因此也适用 `maxLineLength`。该限制包含整条 JSON 消息及其中的 base64 数据；base64 通常使图片体积增加约三分之一。调大此值不会改变模型 API 的请求体上限或图像 token 规则。修改后需要重新启动 Runtime 才会生效。
 
 例如 `filesystem.disabledTools: ["write_file"]` 排除模型可见的 `filesystem_write_file`。禁用工具不会进入 `runtime.Tools`，Agent 也不会执行它，即使模型返回了该工具名。`disabledTools` 不支持通配符，不存在的工具名不影响其他工具。`disabled: true` 的服务器可以不填写 `command` 或 `url`。
 

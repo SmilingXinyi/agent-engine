@@ -9,6 +9,7 @@
         "@modelcontextprotocol/server-filesystem",
         "/tmp/workspace"
       ],
+      "maxLineLength": 67108864,
       "env": {},
       "dir": "/tmp"
     },

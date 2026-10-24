@@ -18,6 +18,9 @@ func TestConfigRejectsInvalidServers(t *testing.T) {
 		`{"servers":{"bad":{"url":"file:///tmp/mcp"}}}`,
 		`{"servers":{"bad":{"url":"https:///mcp"}}}`,
 		`{"servers":{"bad name":{"command":"echo"}}}`,
+		`{"mcpServers":{"local":{"command":"echo","maxLineLength":-1}}}`,
+		`{"mcpServers":{"offline":{"disabled":true,"maxLineLength":-1}}}`,
+		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","maxLineLength":67108864}}}`,
 		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","headers":{"Bad Header":"value"}}}}`,
 		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","headers":{"":"value"}}}}`,
 		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","headers":{"X-Test":"value\r\ninjected"}}}}`,
@@ -34,7 +37,7 @@ func TestConfigRejectsInvalidServers(t *testing.T) {
 }
 
 func TestParseConfigSupportsCanonicalAndLegacyFormats(t *testing.T) {
-	servers := `{"stdio":{"command":"echo","args":["test"],"env":{"FOO":"bar"},"dir":"/tmp"},"remote":{"url":"https://example.com/mcp","headers":{"Authorization":"Bearer test"}}}`
+	servers := `{"stdio":{"command":"echo","args":["test"],"env":{"FOO":"bar"},"dir":"/tmp","maxLineLength":67108864},"remote":{"url":"https://example.com/mcp","headers":{"Authorization":"Bearer test"}}}`
 	canonical, err := ParseConfig(`{"mcpServers":` + servers + `}`)
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +48,9 @@ func TestParseConfigSupportsCanonicalAndLegacyFormats(t *testing.T) {
 	}
 	if canonical.Servers["stdio"].Dir != "/tmp" || canonical.Servers["remote"].Headers["Authorization"] != "Bearer test" {
 		t.Fatalf("config = %#v", canonical)
+	}
+	if canonical.Servers["stdio"].MaxLineLength != 64*1024*1024 || canonical.Servers["remote"].MaxLineLength != 0 {
+		t.Fatalf("frame limits = %#v", canonical.Servers)
 	}
 	encoded, err := json.Marshal(canonical)
 	if err != nil || !strings.Contains(string(encoded), `"mcpServers"`) || strings.Contains(string(encoded), `"servers"`) {
@@ -66,6 +72,8 @@ func TestParseConfigRejectsMalformedDocuments(t *testing.T) {
 		`{"mcpSevers":{}}`,
 		`{"mcpServers":{"local":{"commmand":"echo"}}}`,
 		`{"mcpServers":{"local":{"command":"echo","args":"test"}}}`,
+		`{"mcpServers":{"local":{"command":"echo","maxLineLength":"67108864"}}}`,
+		`{"mcpServers":{"local":{"command":"echo","maxLineLength":1.5}}}`,
 		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","headers":{"Authorization":42}}}}`,
 		`{"mcpServers":{"local":{"command":"echo","disabled":"true"}}}`,
 		`{"mcpServers":{"local":{"command":"echo","disabledTools":"write_file"}}}`,
