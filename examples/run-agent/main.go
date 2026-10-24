@@ -1,4 +1,4 @@
-// Run from the workspace root: go run ./example/run-agent/main.go
+// Run from the workspace root: go run ./examples/run-agent/main.go
 package main
 
 import (
@@ -26,8 +26,8 @@ import (
 )
 
 func main() {
-	promptPath := flag.String("prompt", "example/prompt.md", "user prompt file")
-	configPath := flag.String("config", "example/.agents/mcp.json", "MCP configuration file")
+	promptPath := flag.String("prompt", "examples/prompt.md", "user prompt file")
+	configPath := flag.String("config", "examples/.agents/mcp.json", "MCP configuration file")
 	envPath := flag.String("env", ".env", "model environment file")
 	skillsPath := flag.String("skills", "", "optional directory containing SKILL.md files")
 	maxSteps := flag.Int("max-steps", 40, "maximum model calls")
@@ -46,8 +46,8 @@ func run(promptPath, configPath, envPath, skillsPath string, maxSteps int, timeo
 	model := firstEnv("AGENT_MODEL", "AGENT_LLM_MODEL")
 	token := firstEnv("AGENT_LLM_TOKEN", "AGENT_LLM_API_KEY")
 	baseURL := os.Getenv("AGENT_LLM_BASE_URL")
-	if model == "" || token == "" || baseURL == "" {
-		return errors.New("configure AGENT_LLM_MODEL, AGENT_LLM_API_KEY and AGENT_LLM_BASE_URL in .env or process environment")
+	if model == "" || baseURL == "" {
+		return errors.New("configure AGENT_LLM_MODEL and AGENT_LLM_BASE_URL in .env or process environment; AGENT_LLM_API_KEY is optional")
 	}
 	prompt, err := os.ReadFile(promptPath)
 	if err != nil {

@@ -29,7 +29,9 @@ main.exe
 .env
 
 # Local example execution logs
-/example/agent-run.log
+/examples/agent-run.log
+/examples/xunlei/*.log
+/examples/.tiny-image/
 
 # Reference source (read-only)
 .zip-src/

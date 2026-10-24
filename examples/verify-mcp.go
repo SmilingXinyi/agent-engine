@@ -1,4 +1,4 @@
-// Run from the workspace root: go run ./example/verify-mcp.go
+// Run from the workspace root: go run ./examples/verify-mcp.go
 package main
 
 import (
@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "example/.agents/mcp.json", "MCP JSON configuration file")
+	configPath := flag.String("config", "examples/.agents/mcp.json", "MCP JSON configuration file")
 	device := flag.String("device", "", "device ID for a screen-element check")
 	flag.Parse()
 	if err := verify(*configPath, *device); err != nil {

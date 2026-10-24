@@ -18,7 +18,7 @@ description: 识别并关闭手机应用中的广告弹窗。
 ## 与 Agent 组合
 
 ```go
-skills, err := agentskill.Load("example/.agents/skills")
+skills, err := agentskill.Load("examples/.agents/skills")
 if err != nil {
     return err
 }

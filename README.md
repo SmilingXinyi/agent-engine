@@ -28,6 +28,14 @@ Initialize and sync the workspace:
 go work sync
 ```
 
+### Remote Desktop Agent
+
+```bash
+go run ./examples/remote-desktop-agent/main.go ./examples/remote-desktop-agent/ocr-tool.go -task "Inspect the remote desktop and report which app is open"
+```
+
+See [example configuration and options](./examples/README_cn.md).
+
 ### Running Tests
 
 Run tests across the workspace:

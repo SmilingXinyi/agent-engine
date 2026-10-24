@@ -20,7 +20,7 @@ import (
 // Exercise the real example entrypoint against local model/MCP servers. No
 // external API credentials, npx subprocess or connected mobile device is used.
 func TestRunWithLocalModelAndMCP(t *testing.T) {
-	for _, mode := range []string{"success", "skills", "permission failure", "max steps"} {
+	for _, mode := range []string{"success", "no api key", "skills", "permission failure", "max steps"} {
 		t.Run(mode, func(t *testing.T) {
 			for _, name := range []string{"AGENT_MODEL", "AGENT_LLM_MODEL", "AGENT_LLM_TOKEN", "AGENT_LLM_API_KEY", "AGENT_LLM_BASE_URL"} {
 				t.Setenv(name, "")
@@ -40,7 +40,14 @@ func TestRunWithLocalModelAndMCP(t *testing.T) {
 			mcpServer := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil))
 			defer mcpServer.Close()
 			modelServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				if request.Header.Get("Authorization") != "Bearer test-key" {
+				expectedAuthorization := "Bearer test-key"
+				if mode == "no api key" {
+					expectedAuthorization = ""
+					if _, present := request.Header["Authorization"]; present {
+						t.Error("Authorization header must be omitted without an API key")
+					}
+				}
+				if request.Header.Get("Authorization") != expectedAuthorization {
 					t.Error("example did not load test credentials")
 				}
 				var payload struct {
@@ -105,6 +112,9 @@ func TestRunWithLocalModelAndMCP(t *testing.T) {
 				"prompt.md": []byte("test prompt"),
 				".env":      []byte("AGENT_LLM_MODEL=\"local-model\"\nAGENT_LLM_API_KEY='test-key'\nAGENT_LLM_BASE_URL=" + modelServer.URL + "\n"),
 			}
+			if mode == "no api key" {
+				files[".env"] = []byte("AGENT_LLM_MODEL=local-model\nAGENT_LLM_BASE_URL=" + modelServer.URL + "\n")
+			}
 			for name, content := range files {
 				if err := os.WriteFile(filepath.Join(directory, name), content, 0600); err != nil {
 					t.Fatal(err)
@@ -126,7 +136,7 @@ func TestRunWithLocalModelAndMCP(t *testing.T) {
 			}
 			err = run(filepath.Join(directory, "prompt.md"), filepath.Join(directory, "mcp.json"), filepath.Join(directory, ".env"), skillsPath, maxSteps, 10*time.Second)
 			switch mode {
-			case "success":
+			case "success", "no api key":
 				if err != nil || modelCalls.Load() != 2 || toolCalls.Load() != 1 {
 					t.Fatalf("error=%v models=%d tools=%d", err, modelCalls.Load(), toolCalls.Load())
 				}

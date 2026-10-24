@@ -28,6 +28,14 @@
 go work sync
 ```
 
+### 远程桌面 Agent 示例
+
+```bash
+go run ./examples/remote-desktop-agent/main.go ./examples/remote-desktop-agent/ocr-tool.go -task "查看远程桌面当前打开的应用，并告诉我结果"
+```
+
+配置与参数参见 [examples 使用说明](./examples/README_cn.md)。
+
 ### 运行测试
 
 执行测试：

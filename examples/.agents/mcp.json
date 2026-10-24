@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "mobile-mcp": {
+      "command": "npx",
+      "args": ["-y", "@mobilenext/mobile-mcp@latest"]
+    },
+    "desktop-agent-remote": {
+      "command": "/Users/xinyi/Downloads/agent-darwin-arm64-v0.2.2/mcp",
+      "args": ["--remote", "http://192.168.8.157:18000"],
+      "maxLineLength": 67108864
+    },
+    "tiny-image": {
+      "command": "./examples/tiny-image-mcp-darwin-arm64",
+      "maxLineLength": 67108864,
+      "env": {
+        "UPLOAD_DIR": "./examples/.tiny-image",
+        "MCP_LOG_FILE": "0"
+      }
+    },
+    "tiny-ocr-mcp": {
+      "command": "./examples/tiny-ocr-mcp",
+      "args": ["-transport", "stdio"]
+    }
+  }
+}
