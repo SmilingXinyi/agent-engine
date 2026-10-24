@@ -4,6 +4,7 @@ package aitoolloop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -33,6 +34,9 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 	if request.Options.MaxSteps < 0 {
 		return result, errors.New("max steps must not be negative")
 	}
+	if request.Options.MaxHistoryRounds < 0 {
+		return result, errors.New("max history rounds must not be negative")
+	}
 	request = request.Clone()
 	tools, err := prepareTools(request.Tools)
 	if err != nil {
@@ -43,6 +47,9 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 	}
 	if request.Options.MaxSteps == 0 {
 		request.Options.MaxSteps = protocol.DefaultMaxSteps
+	}
+	if request.Options.MaxHistoryRounds == 0 {
+		request.Options.MaxHistoryRounds = protocol.DefaultMaxHistoryRounds
 	}
 	result.RunID, err = newID("run")
 	if err != nil {
@@ -130,7 +137,7 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 	}
 	calls, err := toolCalls(response.Message)
 	if err != nil {
-		return true, err
+		return true, fmt.Errorf("validate tool calls: step=%d request=%s finish_reason=%s: %w", step, requestID, response.FinishReason, err)
 	}
 	if len(calls) == 0 {
 		result.StopReason = protocol.StopNatural

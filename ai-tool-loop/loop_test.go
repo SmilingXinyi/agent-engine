@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -218,6 +219,46 @@ func TestMalformedToolBatchHasNoSideEffects(t *testing.T) {
 	}
 }
 
+func TestInvalidToolArgumentsIncludeRawInputAndModelFinishReason(t *testing.T) {
+	for _, limit := range []int{1, 3} {
+		for _, raw := range []string{"", "null", "[]", `"text"`, `{"mode":`} {
+			t.Run(fmt.Sprintf("limit=%d/arguments=%q", limit, raw), func(t *testing.T) {
+				request := initialRequest()
+				request.Options.MaxSteps = limit
+				request.Tools = []protocol.Tool{{Definition: aiprot.ToolDefinition{Name: "test"}, Execute: func(context.Context, json.RawMessage) (aiprot.ToolResult, error) {
+					t.Fatal("invalid tool batch must not execute any tools")
+					return aiprot.ToolResult{}, nil
+				}}}
+				invalid := aiprot.ToolCall{ID: "invalid-call", Name: "capture_screen", Arguments: json.RawMessage(raw)}
+				response := toolResponse(call("test"), invalid)
+				if raw == `{"mode":` {
+					response.FinishReason = aiprot.FinishLength
+				}
+				provider := scriptedProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) { return response, nil }}
+				result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
+				if err == nil || result.StopReason != protocol.StopError || len(result.ToolCalls) != 0 {
+					t.Fatalf("stop=%s tools=%d error=%v", result.StopReason, len(result.ToolCalls), err)
+				}
+				for _, expected := range []string{
+					`tool "capture_screen" arguments must be a JSON object`,
+					`call_id="invalid-call"`, "raw_arguments=" + strconv.Quote(raw),
+					"step=1", "request=" + result.Steps[0].RequestID, "finish_reason=" + string(response.FinishReason),
+				} {
+					if !strings.Contains(err.Error(), expected) {
+						t.Fatalf("missing %q in diagnostic: %v", expected, err)
+					}
+				}
+				if raw == `{"mode":` {
+					var syntaxError *json.SyntaxError
+					if !errors.As(err, &syntaxError) {
+						t.Fatal("JSON decoding error was lost")
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestMaxStepsStopsBeforeLastToolBatch(t *testing.T) {
 	for _, limit := range []int{0, 1, 2} {
 		request := initialRequest()
@@ -239,6 +280,71 @@ func TestMaxStepsStopsBeforeLastToolBatch(t *testing.T) {
 		if err != nil || result.StopReason != protocol.StopMaxSteps || len(result.Steps) != limit || executions != limit-1 || result.Usage.TotalTokens != limit*3 || result.LastResponse.Usage.TotalTokens != 3 {
 			t.Fatalf("result=%#v error=%v executions=%d", result, err, executions)
 		}
+	}
+}
+
+func TestRunWindowsEveryModelCallWithoutDiscardingRecords(t *testing.T) {
+	request := initialRequest()
+	request.Messages = append([]aiprot.Message{aiprot.TextMessage(aiprot.RoleSystem, "persistent instructions")}, request.Messages...)
+	original := request.Clone()
+	request.Options.MaxHistoryRounds = 2
+	request.Options.MaxSteps = 6
+	for _, name := range []string{"first", "second"} {
+		request.Tools = append(request.Tools, protocol.Tool{
+			Definition: aiprot.ToolDefinition{Name: name}, Execute: noopTool,
+		})
+	}
+	var modelRequests []aiprot.ModelRequest
+	provider := scriptedProvider{generate: func(_ context.Context, modelRequest aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+		modelRequests = append(modelRequests, modelRequest.Clone())
+		step := len(modelRequests)
+		if modelRequest.Messages[0].Role != aiprot.RoleSystem || modelRequest.Messages[0].Text() != "persistent instructions" {
+			t.Fatal("system prompt was removed")
+		}
+		wantLength := 1 + min(step-1, 2)*3
+		if step <= 3 {
+			wantLength++ // The original user input belongs to the first round.
+		}
+		if len(modelRequest.Messages) != wantLength {
+			t.Fatalf("step %d messages=%d, want %d", step, len(modelRequest.Messages), wantLength)
+		}
+		for index, message := range modelRequest.Messages {
+			if message.Role != aiprot.RoleAssistant {
+				continue
+			}
+			calls := message.ToolCalls()
+			if len(calls) != 2 || index+2 >= len(modelRequest.Messages) {
+				t.Fatal("assistant tool batch was split")
+			}
+			for offset, toolCall := range calls {
+				results := modelRequest.Messages[index+1+offset].ToolResults()
+				if len(results) != 1 || results[0].ToolCallID != toolCall.ID {
+					t.Fatal("tool result lost its matching call")
+				}
+			}
+		}
+		if step == 5 {
+			return textResponse("done"), nil
+		}
+		first, second := call("first"), call("second")
+		first.ID, second.ID = fmt.Sprintf("first-%d", step), fmt.Sprintf("second-%d", step)
+		return toolResponse(first, second), nil
+	}}
+	request.Options.Hooks.OnStepStart = func(_ context.Context, info protocol.StepStartInfo) error {
+		if info.Step >= 4 && (len(info.Request.Messages) != 7 || info.Request.Messages[1].Role != aiprot.RoleAssistant) {
+			t.Fatal("step hook did not see the same trimmed request as the model")
+		}
+		return nil
+	}
+	result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
+	if err != nil || result.StopReason != protocol.StopNatural || len(modelRequests) != 5 {
+		t.Fatalf("stop=%s models=%d error=%v", result.StopReason, len(modelRequests), err)
+	}
+	if len(result.Messages) != 15 || len(result.ToolCalls) != 8 || len(result.Steps) != 5 || result.Messages[1].Text() != "hello" {
+		t.Fatalf("full execution history was discarded: messages=%d tools=%d steps=%d", len(result.Messages), len(result.ToolCalls), len(result.Steps))
+	}
+	if !reflect.DeepEqual(request.Messages, original.Messages) {
+		t.Fatal("caller history was modified")
 	}
 }
 
@@ -273,6 +379,9 @@ func TestInvalidRequestsDoNotEnterLifecycle(t *testing.T) {
 	negative := initialRequest()
 	negative.Options.MaxSteps = -1
 	requests = append(requests, negative)
+	negativeHistory := initialRequest()
+	negativeHistory.Options.MaxHistoryRounds = -1
+	requests = append(requests, negativeHistory)
 	for _, tools := range [][]protocol.Tool{
 		{{Definition: aiprot.ToolDefinition{Name: "test"}}},
 		{{Definition: aiprot.ToolDefinition{Name: " ", InputSchema: json.RawMessage(`{}`)}, Execute: noopTool}},

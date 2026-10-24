@@ -22,7 +22,7 @@ import (
 result, err := loop.New(client).Run(context.Background(), protocol.Request{
     Model: "your-model",
     Messages: []aiprot.Message{aiprot.TextMessage(aiprot.RoleUser, "hello")},
-    Options: protocol.RunOptions{MaxSteps: 10},
+    Options: protocol.RunOptions{MaxSteps: 40, MaxHistoryRounds: 10},
 })
 fmt.Println(result.LastResponse.Message.Text())
 fmt.Println(result.StopReason, result.Usage.TotalTokens, err)
@@ -36,6 +36,10 @@ fmt.Println(result.StopReason, result.Usage.TotalTokens, err)
 
 流程为模型调用 → 校验整批工具调用 → 顺序执行 → 追加 assistant/tool 消息 → 再次调用模型。`MaxSteps` 包含最终回答，零值使用默认 10，负值无效。工具不会由循环自动重试。
 
+`Options.MaxHistoryRounds` 控制每次模型请求保留的历史轮数，默认 `10`，`0` 使用默认值，负值无效。它与控制总执行次数的 `MaxSteps` 相互独立。超出上限时从最早一轮开始省略；所有 `system` 消息始终保留且不计入轮数。`user` / `developer` 输入与随后一次 assistant 回复及其全部 tool 结果组成一轮；没有新用户输入的连续 assistant 回复各算一轮，尚未得到回复的新输入也占一轮。多工具结果不会拆开，也不会留下裁剪造成的孤立 tool 消息。
+
+裁剪在 `Request.ModelCall` 组装本轮消息时进行，只改变发给模型及 Step Hook 的请求副本。`Result.Messages`、`Steps`、`ToolCalls` 仍保留完整执行记录。最初的用户任务也可能随旧轮次被省略；必须始终保留的规则应放在 system prompt 中。窗口按轮数而非 token 或字节计数，不保证请求体一定低于模型 API 上限。
+
 | StopReason | 行为 |
 | --- | --- |
 | `StopNatural` | 模型没有工具调用，error 为 nil；不代表业务任务一定完成 |
@@ -43,6 +47,8 @@ fmt.Println(result.StopReason, result.Usage.TotalTokens, err)
 | `StopError` | 模型、协议校验、Hook 或 context 错误，返回部分执行记录及 error |
 
 完整工具批次中的 ID、名称、重复 ID 和 JSON object 参数在任何工具执行前校验。未知工具、普通执行错误及工具 panic 会作为 `IsError` 结果回填模型。循环在各执行边界检查 context，取消后停止后续工具和模型调用。
+
+模型返回的工具参数不是 JSON object 时，错误包含工具名、调用 ID、带引号转义的原始参数及 JSON 解码错误；工具调用校验错误还会附带 step、request ID 和模型的 `finish_reason`。校验发生在该轮工具执行之前，因此这类调用不会触发 ToolStart Hook，可通过 SDK 的 OnResponse Hook 记录原始模型调用。
 
 `Result.LastResponse` 是最后一次模型响应，usage 保持单次值。`Result.Usage` 为累计值；`Messages` 包括输入及已产生的消息，`Steps` 保存每步响应和时间，`ToolCalls` 保存执行参数、结果、错误和时间。`Result.Clone()` 可取得独立的数据副本。截止限步或中途失败时，Messages 可能包含尚未执行完整的工具批次，本期不提供自动续接。
 

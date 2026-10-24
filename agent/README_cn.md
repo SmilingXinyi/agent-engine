@@ -55,7 +55,7 @@ func main() {
 
 执行顺序为：模型请求 → 顺序执行模型指定的工具 → 将 assistant 工具调用消息和 tool 结果追加到上下文 → 再次请求模型，直到生成最终回复。
 
-`Request.Options` 使用 `ai-tool-loop/protocol.RunOptions`：`Options.MaxSteps` 是模型请求次数上限，包含最终回复；默认 `10`。达到上限仍有工具调用时返回 `StopMaxSteps` 和 nil error，该轮工具不执行。没有工具调用时为 `StopNatural`，它不代表业务任务必然成功。工具执行错误及 panic 作为 `IsError` 结果回传模型；非法工具调用参数、context 取消、模型请求错误及生命周期 Hook 错误会返回 `StopError` 和部分执行记录。
+`Request.Options` 使用 `ai-tool-loop/protocol.RunOptions`：`Options.MaxSteps` 是模型请求次数上限，包含最终回复；默认 `10`。`Options.MaxHistoryRounds` 是每次模型请求携带的历史轮数上限，默认 `10`，始终保留全部 system 消息，按完整轮次省略最早内容；完整执行记录仍保留。达到 MaxSteps 上限仍有工具调用时返回 `StopMaxSteps` 和 nil error，该轮工具不执行。没有工具调用时为 `StopNatural`，它不代表业务任务必然成功。工具执行错误及 panic 作为 `IsError` 结果回传模型；非法工具调用参数、context 取消、模型请求错误及生命周期 Hook 错误会返回 `StopError` 和部分执行记录。
 
 `Options.Hooks` 支持运行、每步及工具的开始/结束回调；返回错误可停止循环。回调接收独立数据快照。详见 [`ai-tool-loop`](../ai-tool-loop/README_cn.md)。原 `Request.MaxSteps`、`agent/protocol.Tool` 和 SDK 响应返回契约已移除，无兼容别名。
 

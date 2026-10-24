@@ -21,7 +21,7 @@ func (request Request) ModelCall(messages []aiprot.Message, runID, requestID str
 	metadata[aiprot.RequestIDMetadataKey] = requestID
 	metadata[MetadataStep] = strconv.Itoa(step)
 	modelRequest := aiprot.ModelRequest{
-		Model: request.Model, Messages: utils.Clone(messages),
+		Model: request.Model, Messages: utils.Clone(recentRounds(messages, request.Options.MaxHistoryRounds)),
 		Temperature: utils.Clone(request.Temperature), MaxOutputTokens: utils.Clone(request.MaxOutputTokens),
 		ToolChoice: request.ToolChoice, Reasoning: utils.Clone(request.Reasoning),
 		OutputFormat: utils.Clone(request.OutputFormat), ProviderOptions: utils.Clone(request.ProviderOptions),
@@ -31,6 +31,40 @@ func (request Request) ModelCall(messages []aiprot.Message, runID, requestID str
 		modelRequest.Tools = append(modelRequest.Tools, utils.Clone(tool.Definition))
 	}
 	return modelRequest
+}
+
+// Preserve complete assistant/tool batches and all system messages. Leading
+// input belongs to the next assistant reply; consecutive assistant replies are
+// separate rounds during autonomous tool execution.
+func recentRounds(messages []aiprot.Message, limit int) []aiprot.Message {
+	if limit <= 0 {
+		limit = DefaultMaxHistoryRounds
+	}
+	var starts []int
+	hasAssistant := false
+	for index, message := range messages {
+		if message.Role == aiprot.RoleSystem {
+			continue
+		}
+		if len(starts) == 0 || (hasAssistant && message.Role != aiprot.RoleTool) {
+			starts = append(starts, index)
+			hasAssistant = false
+		}
+		if message.Role == aiprot.RoleAssistant {
+			hasAssistant = true
+		}
+	}
+	if len(starts) <= limit {
+		return messages
+	}
+	cutoff := starts[len(starts)-limit]
+	retained := make([]aiprot.Message, 0, len(messages)-cutoff)
+	for index, message := range messages {
+		if index >= cutoff || message.Role == aiprot.RoleSystem {
+			retained = append(retained, message)
+		}
+	}
+	return retained
 }
 
 // Clone copies mutable execution records independently of the original result.

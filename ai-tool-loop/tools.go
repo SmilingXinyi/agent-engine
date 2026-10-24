@@ -54,8 +54,9 @@ func toolCalls(message aiprot.Message) ([]aiprot.ToolCall, error) {
 		}
 		seen[call.ID] = true
 		var arguments map[string]any
-		if json.Unmarshal(call.Arguments, &arguments) != nil || arguments == nil {
-			return nil, fmt.Errorf("tool %q arguments must be a JSON object", call.Name)
+		decodeErr := json.Unmarshal(call.Arguments, &arguments)
+		if decodeErr != nil || arguments == nil {
+			return nil, errors.Join(fmt.Errorf("tool %q arguments must be a JSON object; call_id=%q raw_arguments=%q", call.Name, call.ID, string(call.Arguments)), decodeErr)
 		}
 	}
 	return message.ToolCalls(), nil

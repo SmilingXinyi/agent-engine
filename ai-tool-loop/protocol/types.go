@@ -9,7 +9,10 @@ import (
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 )
 
-const DefaultMaxSteps = 10
+const (
+	DefaultMaxSteps         = 10
+	DefaultMaxHistoryRounds = 10
+)
 
 const (
 	// MetadataRunID identifies one execution on every model call.
@@ -54,7 +57,12 @@ type Request struct {
 type RunOptions struct {
 	// MaxSteps counts model calls, including the final answer. Zero uses DefaultMaxSteps.
 	MaxSteps int
-	Hooks    Hooks
+	// MaxHistoryRounds bounds the rounds sent to the model, excluding system
+	// messages. A round groups user/developer input with an assistant reply and
+	// its tool results; another assistant reply starts another round. Zero uses
+	// DefaultMaxHistoryRounds. Full execution records are retained.
+	MaxHistoryRounds int
+	Hooks            Hooks
 }
 
 // Result owns execution snapshots. Usage is cumulative; LastResponse and each
