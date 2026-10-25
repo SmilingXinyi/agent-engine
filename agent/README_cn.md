@@ -59,6 +59,35 @@ func main() {
 
 `Options.Hooks` 支持运行、每步及工具的开始/结束回调；返回错误可停止循环。回调接收独立数据快照。详见 [`ai-tool-loop`](../ai-tool-loop/README_cn.md)。原 `Request.MaxSteps`、`agent/protocol.Tool` 和 SDK 响应返回契约已移除，无兼容别名。
 
+## 工具执行确认
+
+通过 `Request.Options.ConfirmTool` 传入同步确认回调，Agent 会将其透传给 ai-tool-loop，本地、Skill 和 MCP 工具使用同一机制。回调签名为 `func(context.Context, loopprot.ToolConfirmationInfo) (loopprot.ToolConfirmationDecision, error)`，可以根据工具名和参数直接批准或等待用户决定。
+
+```go
+// loopprot 为 ai-tool-loop/protocol；confirmTool 为调用方提供的确认回调。
+options := loopprot.RunOptions{
+    ConfirmTool: confirmTool,
+    ToolDenialPolicy: loopprot.ToolDenialContinue, // 生产：反馈拒绝原因并继续
+}
+// 调试时改为拒绝即终止：
+options.ToolDenialPolicy = loopprot.ToolDenialStop
+// 将 options 赋给 Request.Options。
+```
+
+Agent 每次 `Execute` 都读取进程环境变量 `AGENT_TOOL_CONFIRMATION`，可通过 `.env` 或进程环境选择开关和拒绝策略：
+
+```sh
+AGENT_TOOL_CONFIRMATION=off       # 关闭确认，直接执行工具
+AGENT_TOOL_CONFIRMATION=continue  # 启用确认，拒绝后反馈模型并继续（生产）
+AGENT_TOOL_CONFIRMATION=stop      # 启用确认，拒绝后终止运行（调试）
+```
+
+该变量未设置或为空时沿用 `Request.Options`：未配置回调就直接执行，策略零值为 `ToolDenialContinue`。显式设置 `off` 会忽略请求中的确认回调；`continue` / `stop` 会覆盖请求中的拒绝策略，但仍需调用方提供 `ConfirmTool` 回调。启用确认却未提供回调，或变量值非法时，在调用模型及生命周期 Hooks 前返回 `StopError` 和配置错误。不会根据环境自动创建终端交互。
+
+Agent 读取进程环境，不自行加载 `.env` 文件；现有示例入口会在执行前加载 `.env`，直接使用 Agent 的程序需自行加载或使用 `export AGENT_TOOL_CONFIRMATION=stop`。直接调用 `Loop.Run` 不读取此变量。
+
+拒绝不调用执行器，原因由决定的 `Reason` 提供；停止策略返回 `StopError` 和可通过 `errors.As` 识别的 `*loopprot.ToolDeniedError`。确认系统报错、panic 或 context 取消均终止运行。执行记录与 ToolEnd Hook 包含 `Confirmation` 决定快照，完整接入示例与边界行为见 [ai-tool-loop 工具执行确认](../ai-tool-loop/README_cn.md#工具执行确认)。
+
 在工作区根目录运行测试：
 
 ```bash

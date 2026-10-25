@@ -1,11 +1,20 @@
 package protocol
 
 import (
+	"fmt"
 	"strconv"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
 )
+
+func (denied *ToolDeniedError) Error() string {
+	message := fmt.Sprintf("tool %q execution denied (call_id=%q)", denied.ToolName, denied.ToolCallID)
+	if denied.Reason != "" {
+		message += ": " + denied.Reason
+	}
+	return message
+}
 
 // Clone copies mutable request data, preserving executors and callbacks.
 func (request Request) Clone() Request { return utils.Clone(request) }

@@ -37,6 +37,11 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 	if request.Options.MaxHistoryRounds < 0 {
 		return result, errors.New("max history rounds must not be negative")
 	}
+	switch request.Options.ToolDenialPolicy {
+	case "", protocol.ToolDenialContinue, protocol.ToolDenialStop:
+	default:
+		return result, fmt.Errorf("invalid tool denial policy %q", request.Options.ToolDenialPolicy)
+	}
 	request = request.Clone()
 	tools, err := prepareTools(request.Tools)
 	if err != nil {
@@ -50,6 +55,9 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 	}
 	if request.Options.MaxHistoryRounds == 0 {
 		request.Options.MaxHistoryRounds = protocol.DefaultMaxHistoryRounds
+	}
+	if request.Options.ToolDenialPolicy == "" {
+		request.Options.ToolDenialPolicy = protocol.ToolDenialContinue
 	}
 	result.RunID, err = newID("run")
 	if err != nil {
@@ -151,7 +159,7 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 		if err = ctx.Err(); err != nil {
 			return true, err
 		}
-		record, toolErr := executeTool(ctx, request.Options.Hooks, result.RunID, requestID, step, tools, call)
+		record, toolErr := executeTool(ctx, request.Options, result.RunID, requestID, step, tools, call)
 		result.ToolCalls = append(result.ToolCalls, utils.Clone(record))
 		toolResult := utils.Clone(record.Result)
 		result.Messages = append(result.Messages, aiprot.Message{Role: aiprot.RoleTool, Parts: []aiprot.ContentPart{{Type: aiprot.ContentToolResult, ToolResult: &toolResult}}})

@@ -62,21 +62,23 @@ func toolCalls(message aiprot.Message) ([]aiprot.ToolCall, error) {
 	return message.ToolCalls(), nil
 }
 
-func executeTool(ctx context.Context, hooks protocol.Hooks, runID, requestID string, step int, tools map[string]protocol.Tool, call aiprot.ToolCall) (record protocol.ToolCallRecord, err error) {
+func executeTool(ctx context.Context, options protocol.RunOptions, runID, requestID string, step int, tools map[string]protocol.Tool, call aiprot.ToolCall) (record protocol.ToolCallRecord, err error) {
 	record = protocol.ToolCallRecord{Step: step, Call: utils.Clone(call), StartedAt: time.Now()}
 	var executionErr error
 	defer func() {
-		if err != nil {
-			record.Result.IsError = true
-			record.Result.Content = append(record.Result.Content, aiprot.ContentPart{Type: aiprot.ContentText, Text: err.Error()})
+		observedErr := errors.Join(executionErr, err)
+		for _, failure := range []error{executionErr, err} {
+			if failure != nil {
+				record.Result.IsError = true
+				record.Result.Content = append(record.Result.Content, aiprot.ContentPart{Type: aiprot.ContentText, Text: failure.Error()})
+			}
 		}
 		record.Result.ToolCallID, record.Result.ToolName = call.ID, call.Name
 		record.Result = utils.Clone(record.Result)
 		record.FinishedAt = time.Now()
-		observedErr := errors.Join(executionErr, err)
-		endErr := notify(ctx, "tool end", hooks.OnToolEnd, protocol.ToolEndInfo{
+		endErr := notify(ctx, "tool end", options.Hooks.OnToolEnd, protocol.ToolEndInfo{
 			RunID: runID, Step: step, RequestID: requestID, Call: record.Call, Result: record.Result,
-			Error: observedErr, StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
+			Confirmation: record.Confirmation, Error: observedErr, StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
 			Duration: record.FinishedAt.Sub(record.StartedAt),
 		})
 		if endErr != nil {
@@ -87,7 +89,7 @@ func executeTool(ctx context.Context, hooks protocol.Hooks, runID, requestID str
 			record.Error = combined.Error()
 		}
 	}()
-	if err = notify(ctx, "tool start", hooks.OnToolStart, protocol.ToolStartInfo{
+	if err = notify(ctx, "tool start", options.Hooks.OnToolStart, protocol.ToolStartInfo{
 		RunID: runID, Step: step, RequestID: requestID, Call: record.Call, StartedAt: record.StartedAt,
 	}); err != nil {
 		return record, err
@@ -96,15 +98,44 @@ func executeTool(ctx context.Context, hooks protocol.Hooks, runID, requestID str
 		return record, err
 	}
 	if tool, exists := tools[call.Name]; exists {
+		if options.ConfirmTool != nil {
+			decision, confirmationErr := confirmTool(ctx, options.ConfirmTool, protocol.ToolConfirmationInfo{
+				RunID: runID, Step: step, RequestID: requestID, Call: call, Definition: tool.Definition,
+			})
+			if confirmationErr != nil {
+				return record, confirmationErr
+			}
+			record.Confirmation = &decision
+			if err = ctx.Err(); err != nil {
+				return record, err
+			}
+			if !decision.Approved {
+				denied := &protocol.ToolDeniedError{ToolName: call.Name, ToolCallID: call.ID, Reason: decision.Reason}
+				if options.ToolDenialPolicy == protocol.ToolDenialStop {
+					return record, denied
+				}
+				executionErr = denied
+				return record, nil
+			}
+		}
 		record.Result, executionErr = safeExecute(ctx, tool.Execute, utils.Clone(call.Arguments))
 	} else {
 		executionErr = fmt.Errorf("unknown tool %q", call.Name)
 	}
-	if executionErr != nil {
-		record.Result.IsError = true
-		record.Result.Content = append(record.Result.Content, aiprot.ContentPart{Type: aiprot.ContentText, Text: executionErr.Error()})
-	}
 	return record, ctx.Err()
+}
+
+func confirmTool(ctx context.Context, confirm func(context.Context, protocol.ToolConfirmationInfo) (protocol.ToolConfirmationDecision, error), info protocol.ToolConfirmationInfo) (decision protocol.ToolConfirmationDecision, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("tool confirmation panicked: %v", recovered)
+		}
+	}()
+	decision, err = confirm(ctx, utils.Clone(info))
+	if err != nil {
+		return decision, fmt.Errorf("tool confirmation: %w", err)
+	}
+	return decision, nil
 }
 
 func safeExecute(ctx context.Context, execute func(context.Context, json.RawMessage) (aiprot.ToolResult, error), arguments json.RawMessage) (result aiprot.ToolResult, err error) {

@@ -36,6 +36,37 @@ type Tool struct {
 	Execute    func(context.Context, json.RawMessage) (aiprot.ToolResult, error)
 }
 
+// ToolDenialPolicy controls what happens after a confirmation rejects a call.
+type ToolDenialPolicy string
+
+const (
+	ToolDenialContinue ToolDenialPolicy = "continue"
+	ToolDenialStop     ToolDenialPolicy = "stop"
+)
+
+// ToolConfirmationInfo is an independent snapshot of one known tool call.
+type ToolConfirmationInfo struct {
+	RunID      string
+	Step       int
+	RequestID  string
+	Call       aiprot.ToolCall
+	Definition aiprot.ToolDefinition
+}
+
+// ToolConfirmationDecision is a caller's decision. The zero value denies a call.
+type ToolConfirmationDecision struct {
+	Approved bool
+	Reason   string
+}
+
+// ToolDeniedError identifies a rejected call in ToolEndInfo.Error and, with
+// ToolDenialStop, the run error. It can be inspected with errors.As.
+type ToolDeniedError struct {
+	ToolName   string
+	ToolCallID string
+	Reason     string
+}
+
 // Request is one sequential execution. Generation settings are copied onto
 // every model call. Message.ProviderOptions travel with Messages.
 // MetadataRunID, MetadataStep, and the SDK request ID are reserved and
@@ -62,6 +93,12 @@ type RunOptions struct {
 	// its tool results; another assistant reply starts another round. Zero uses
 	// DefaultMaxHistoryRounds. Full execution records are retained.
 	MaxHistoryRounds int
+	// ConfirmTool runs synchronously before each known tool executes. Nil allows
+	// execution without confirmation. Callbacks must honor context cancellation;
+	// errors and panics stop the run, regardless of ToolDenialPolicy.
+	ConfirmTool func(context.Context, ToolConfirmationInfo) (ToolConfirmationDecision, error)
+	// ToolDenialPolicy defaults to ToolDenialContinue when empty.
+	ToolDenialPolicy ToolDenialPolicy
 	Hooks            Hooks
 }
 
@@ -87,12 +124,14 @@ type StepResult struct {
 }
 
 type ToolCallRecord struct {
-	Step       int
-	Call       aiprot.ToolCall
-	Result     aiprot.ToolResult
-	Error      string
-	StartedAt  time.Time
-	FinishedAt time.Time
+	Step   int
+	Call   aiprot.ToolCall
+	Result aiprot.ToolResult
+	// Confirmation is nil when no decision was returned successfully.
+	Confirmation *ToolConfirmationDecision
+	Error        string
+	StartedAt    time.Time
+	FinishedAt   time.Time
 }
 
 // Hooks receive independent snapshots. Returning an error stops execution;
@@ -152,13 +191,14 @@ type ToolStartInfo struct {
 }
 
 type ToolEndInfo struct {
-	RunID      string
-	Step       int
-	RequestID  string
-	Call       aiprot.ToolCall
-	Result     aiprot.ToolResult
-	Error      error
-	StartedAt  time.Time
-	FinishedAt time.Time
-	Duration   time.Duration
+	RunID        string
+	Step         int
+	RequestID    string
+	Call         aiprot.ToolCall
+	Result       aiprot.ToolResult
+	Confirmation *ToolConfirmationDecision
+	Error        error
+	StartedAt    time.Time
+	FinishedAt   time.Time
+	Duration     time.Duration
 }

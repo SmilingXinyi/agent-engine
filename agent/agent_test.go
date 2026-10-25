@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/SmilingXinyi/agent-engine/agent"
 	"github.com/SmilingXinyi/agent-engine/agent/protocol"
@@ -11,6 +12,57 @@ import (
 	"reflect"
 	"testing"
 )
+
+func TestExecuteForwardsToolConfirmationAndDenialPolicy(t *testing.T) {
+	t.Setenv("AGENT_TOOL_CONFIRMATION", "")
+	for _, policy := range []loopprot.ToolDenialPolicy{loopprot.ToolDenialContinue, loopprot.ToolDenialStop} {
+		t.Run(string(policy), func(t *testing.T) {
+			models, confirmations := 0, 0
+			ctx := context.Background()
+			call := aiprot.ToolCall{ID: "write-id", Name: "write", Arguments: json.RawMessage(`{"path":"report.txt"}`)}
+			provider := testProvider{generate: func(_ context.Context, input aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+				models++
+				if models == 1 {
+					return aiprot.ModelResponse{Message: aiprot.Message{Role: aiprot.RoleAssistant, Parts: []aiprot.ContentPart{{Type: aiprot.ContentToolCall, ToolCall: &call}}}}, nil
+				}
+				result := input.Messages[2].ToolResults()[0]
+				if !result.IsError || result.ToolCallID != call.ID {
+					t.Fatalf("tool result=%+v", result)
+				}
+				return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "declined")}, nil
+			}}
+			request := protocol.Request{
+				Model: "model", UserPrompt: "write a report",
+				Tools: []loopprot.Tool{{Definition: aiprot.ToolDefinition{Name: "write"}, Execute: func(context.Context, json.RawMessage) (aiprot.ToolResult, error) {
+					t.Fatal("denied tool executed")
+					return aiprot.ToolResult{}, nil
+				}}},
+				Options: loopprot.RunOptions{
+					ToolDenialPolicy: policy,
+					ConfirmTool: func(callContext context.Context, info loopprot.ToolConfirmationInfo) (loopprot.ToolConfirmationDecision, error) {
+						confirmations++
+						if callContext != ctx || !reflect.DeepEqual(info.Call, call) || info.Definition.Name != "write" {
+							t.Fatalf("confirmation=%+v", info)
+						}
+						return loopprot.ToolConfirmationDecision{Reason: "user declined"}, nil
+					},
+				},
+			}
+			result, err := agent.New(ai.NewClient(provider, aiprot.Hooks{})).Execute(ctx, request)
+			if confirmations != 1 || len(result.ToolCalls) != 1 || result.ToolCalls[0].Confirmation == nil || result.ToolCalls[0].Confirmation.Reason != "user declined" {
+				t.Fatalf("result=%+v confirmations=%d", result, confirmations)
+			}
+			if policy == loopprot.ToolDenialStop {
+				var denied *loopprot.ToolDeniedError
+				if !errors.As(err, &denied) || models != 1 || result.StopReason != loopprot.StopError {
+					t.Fatalf("result=%+v error=%v models=%d", result, err, models)
+				}
+			} else if err != nil || models != 2 || result.StopReason != loopprot.StopNatural {
+				t.Fatalf("result=%+v error=%v models=%d", result, err, models)
+			}
+		})
+	}
+}
 
 type testProvider struct {
 	generate func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error)
@@ -22,6 +74,7 @@ func (provider testProvider) Generate(ctx context.Context, request aiprot.ModelR
 }
 
 func TestExecuteOrganizesContextAndKeepsRunsIndependent(t *testing.T) {
+	t.Setenv("AGENT_TOOL_CONFIRMATION", "")
 	history := []aiprot.Message{aiprot.TextMessage(aiprot.RoleUser, "old"), aiprot.TextMessage(aiprot.RoleAssistant, "reply")}
 	expected := append([]aiprot.Message{aiprot.TextMessage(aiprot.RoleSystem, " system ")}, history...)
 	expected = append(expected, aiprot.TextMessage(aiprot.RoleUser, "next"))
@@ -56,6 +109,7 @@ func TestExecuteOrganizesContextAndKeepsRunsIndependent(t *testing.T) {
 }
 
 func TestExecuteAcceptsHistoryWithoutUserPrompt(t *testing.T) {
+	t.Setenv("AGENT_TOOL_CONFIRMATION", "")
 	history := []aiprot.Message{aiprot.TextMessage(aiprot.RoleUser, "hello")}
 	assistant := agent.New(ai.NewClient(testProvider{generate: func(_ context.Context, request aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		if !reflect.DeepEqual(request.Messages, history) {
@@ -69,6 +123,7 @@ func TestExecuteAcceptsHistoryWithoutUserPrompt(t *testing.T) {
 }
 
 func TestExecuteForwardsGenerationSettings(t *testing.T) {
+	t.Setenv("AGENT_TOOL_CONFIRMATION", "")
 	temperature := 0.4
 	limit := 16
 	history := []aiprot.Message{aiprot.TextMessage(aiprot.RoleDeveloper, "rules")}
@@ -103,6 +158,7 @@ func TestExecuteForwardsGenerationSettings(t *testing.T) {
 }
 
 func TestExecuteReturnsPartialLoopResult(t *testing.T) {
+	t.Setenv("AGENT_TOOL_CONFIRMATION", "")
 	failure := errors.New("provider failure")
 	assistant := agent.New(ai.NewClient(testProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "partial")}, failure
@@ -114,6 +170,7 @@ func TestExecuteReturnsPartialLoopResult(t *testing.T) {
 }
 
 func TestExecuteRejectsInvalidInput(t *testing.T) {
+	t.Setenv("AGENT_TOOL_CONFIRMATION", "")
 	assistant := agent.New(ai.NewClient(testProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		t.Fatal("unexpected call")
 		return aiprot.ModelResponse{}, nil
