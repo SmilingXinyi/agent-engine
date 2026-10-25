@@ -18,6 +18,11 @@ func TestConfigRejectsInvalidServers(t *testing.T) {
 		`{"servers":{"bad":{"url":"file:///tmp/mcp"}}}`,
 		`{"servers":{"bad":{"url":"https:///mcp"}}}`,
 		`{"servers":{"bad name":{"command":"echo"}}}`,
+		`{"mcpServers":{"remote":{"type":"websocket","url":"https://example.com/mcp"}}}`,
+		`{"mcpServers":{"remote":{"type":"sse","command":"echo"}}}`,
+		`{"mcpServers":{"remote":{"type":"http","command":"echo"}}}`,
+		`{"mcpServers":{"local":{"type":"stdio","url":"https://example.com/mcp"}}}`,
+		`{"mcpServers":{"remote":{"type":"sse","url":"https://example.com/sse","maxLineLength":1024}}}`,
 		`{"mcpServers":{"local":{"command":"echo","maxLineLength":-1}}}`,
 		`{"mcpServers":{"offline":{"disabled":true,"maxLineLength":-1}}}`,
 		`{"mcpServers":{"remote":{"url":"https://example.com/mcp","maxLineLength":67108864}}}`,
@@ -71,6 +76,7 @@ func TestParseConfigRejectsMalformedDocuments(t *testing.T) {
 		`{"mcpServers":{},"servers":{}}`,
 		`{"mcpSevers":{}}`,
 		`{"mcpServers":{"local":{"commmand":"echo"}}}`,
+		`{"mcpServers":{"remote":{"type":42,"url":"https://example.com/mcp"}}}`,
 		`{"mcpServers":{"local":{"command":"echo","args":"test"}}}`,
 		`{"mcpServers":{"local":{"command":"echo","maxLineLength":"67108864"}}}`,
 		`{"mcpServers":{"local":{"command":"echo","maxLineLength":1.5}}}`,
@@ -106,6 +112,27 @@ func TestParseConfigRetainsDisabledServerAndToolSettings(t *testing.T) {
 	}
 }
 
+func TestParseConfigTransportTypes(t *testing.T) {
+	content := `{"mcpServers":{"local":{"type":"stdio","command":"echo"},"remote":{"type":"http","url":"https://example.com/mcp"},"legacy":{"type":"sse","url":"https://example.com/sse"},"offline":{"type":"sse","disabled":true}}}`
+	config, err := ParseConfig(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, expected := range map[string]string{"local": "stdio", "remote": "http", "legacy": "sse", "offline": "sse"} {
+		if config.Servers[name].Type != expected {
+			t.Fatalf("server %s type=%q, want %q", name, config.Servers[name].Type, expected)
+		}
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundtrip, err := ParseConfig(string(encoded))
+	if err != nil || !reflect.DeepEqual(roundtrip, config) {
+		t.Fatalf("roundtrip=%#v error=%v", roundtrip, err)
+	}
+}
+
 func TestLoadConfigReadsFileAndReportsErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mcp.json")
 	if _, err := LoadConfig(path); !errors.Is(err, os.ErrNotExist) {
@@ -128,7 +155,11 @@ func TestLoadConfigReadsFileAndReportsErrors(t *testing.T) {
 
 func TestExampleFileUsesSupportedFormat(t *testing.T) {
 	config, err := LoadConfig("../mcp.example.json")
-	if err != nil || len(config.Servers) != 2 {
+	if err != nil || len(config.Servers) != 3 {
 		t.Fatalf("example config=%#v error=%v", config, err)
+	}
+	legacy := config.Servers["legacy-sse"]
+	if legacy.Type != "sse" || !legacy.Disabled || legacy.URL != "https://mcp.example.com/sse" {
+		t.Fatalf("legacy SSE example=%#v", legacy)
 	}
 }

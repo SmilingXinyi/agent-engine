@@ -35,6 +35,9 @@ func buildTransport(server protocol.ServerConfig) sdk.Transport {
 			clone.Transport = &headerTransport{base: base, headers: headers}
 			client = &clone
 		}
+		if server.Type == "sse" {
+			return &sdk.SSEClientTransport{Endpoint: server.URL, HTTPClient: client}
+		}
 		return &sdk.StreamableClientTransport{
 			Endpoint: server.URL, HTTPClient: client,
 			DisableStandaloneSSE: true,

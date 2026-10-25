@@ -173,6 +173,68 @@ func testContext(t *testing.T) context.Context {
 	return ctx
 }
 
+func TestHTTPTransportTypesDiscoverAndExecuteTools(t *testing.T) {
+	for _, transportType := range []string{"", "http", "sse"} {
+		t.Run("type="+transportType, func(t *testing.T) {
+			server := sdk.NewServer(&sdk.Implementation{Name: "transport-test", Version: "1.0.0"}, &sdk.ServerOptions{PageSize: 1})
+			for _, name := range []string{"echo", "hidden", "ping"} {
+				server.AddTool(&sdk.Tool{Name: name, InputSchema: json.RawMessage(`{"type":"object"}`)}, func(_ context.Context, request *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+					return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: string(request.Params.Arguments)}}}, nil
+				})
+			}
+			var handler http.Handler
+			if transportType == "sse" {
+				handler = sdk.NewSSEHandler(func(*http.Request) *sdk.Server { return server }, nil)
+			} else {
+				handler = sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
+			}
+			var gets, posts atomic.Int32
+			httpServer := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Header.Get("Authorization") != "Bearer transport-test" {
+					t.Error("authorization header missing from MCP request")
+					writer.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if request.Method == http.MethodGet {
+					gets.Add(1)
+				}
+				if request.Method == http.MethodPost {
+					posts.Add(1)
+				}
+				handler.ServeHTTP(writer, request)
+			}))
+			defer httpServer.Close()
+			config, err := protocol.ParseConfig(fmt.Sprintf(`{"mcpServers":{"demo":{"type":%q,"url":%q,"headers":{"Authorization":"Bearer transport-test"},"disabledTools":["hidden"]}}}`, transportType, httpServer.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings := config.Servers["demo"]
+			settings.HTTPClient = httpServer.Client()
+			config.Servers["demo"] = settings
+			ctx := testContext(t)
+			runtime, err := Start(ctx, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer runtime.Close()
+			if len(runtime.Tools) != 2 || runtime.Tools[0].Definition.Name != "demo_echo" || runtime.Tools[1].Definition.Name != "demo_ping" {
+				t.Fatalf("paginated, filtered tools = %#v", runtime.Tools)
+			}
+			arguments := json.RawMessage(`{"value":9007199254740993}`)
+			result, err := runtime.Tools[0].Execute(ctx, arguments)
+			if err != nil || result.IsError || result.Text() != string(arguments) {
+				t.Fatalf("result=%#v error=%v", result, err)
+			}
+			if posts.Load() == 0 || (transportType == "sse" && gets.Load() == 0) {
+				t.Fatalf("GET=%d POST=%d", gets.Load(), posts.Load())
+			}
+			if err := runtime.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestHTTPToolsCompleteAgentExecution(t *testing.T) {
 	ctx := testContext(t)
 	server := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1.0.0"}, &sdk.ServerOptions{PageSize: 1})

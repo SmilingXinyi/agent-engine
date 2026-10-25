@@ -1,10 +1,10 @@
 # mcp-runtime
 
-与历史 `out/mcp-runtime` 相比，本模块直接输出 `ai-tool-loop/protocol.Tool`，去掉旧 Engine / Loop 的类型桥接。保留 stdio、Streamable HTTP、自定义 HTTPClient / headers、环境变量覆盖、分页发现、名称前缀和连接释放；另有整服务 / 原始工具名禁用。暂不增加 legacy SSE 或重连配置。
+与历史 `out/mcp-runtime` 相比，本模块直接输出 `ai-tool-loop/protocol.Tool`，去掉旧 Engine / Loop 的类型桥接。支持 stdio、Streamable HTTP、legacy SSE、自定义 HTTPClient / headers、环境变量覆盖、分页发现、名称前缀和连接释放；另有整服务 / 原始工具名禁用。
 
 在连接前校验 HTTP header 名称和控制字符。发现工具时要求 schema 为 JSON object，根 `type` 若存在也必须为 `object`。执行参数保留原始 JSON 值，避免大整数经 float64 转换后改变。非文本 MCP 内容仍作为 JSON 文本返回，视觉消息转换需要单独的模型适配。
 
-使用官方 MCP Go SDK 连接服务器、发现工具并适配为 `ai-tool-loop/protocol.Tool`。生产代码只依赖循环的工具契约，不依赖 Agent；端到端测试使用 Agent 验证组合行为。支持 stdio 和 Streamable HTTP。调用方持有 Runtime，可在多次 Agent 请求间复用；用完后调用 `Close` 释放连接和子进程。
+使用官方 MCP Go SDK 连接服务器、发现工具并适配为 `ai-tool-loop/protocol.Tool`。生产代码只依赖循环的工具契约，不依赖 Agent；端到端测试使用 Agent 验证组合行为。调用方持有 Runtime，可在多次 Agent 请求间复用；用完后调用 `Close` 释放连接和子进程。
 
 工具名统一为 `{server_name}_{tool_name}`，例如 `filesystem_read_file`。实际 MCP 请求仍使用服务器原始工具名。模型可见名称限定为 1–64 个字母、数字、下划线或连字符；重名会返回错误。
 
@@ -64,7 +64,7 @@ func main() {
 }
 ```
 
-stdio 的 `Env` 会覆盖继承的环境变量，`Dir` 指定子进程工作目录。`MaxLineLength` 设置单条入站 JSON-RPC 消息的字节上限；省略或为 `0` 时使用 SDK 默认值（16 MiB），负数会被拒绝。该参数仅支持 stdio，不能用于 Streamable HTTP。连接关闭时先关闭子进程 stdin，等待 5 秒；仍未退出则发送 SIGTERM，再等待 5 秒后强制终止并回收子进程。远程服务器配置如下：
+stdio 的 `Env` 会覆盖继承的环境变量，`Dir` 指定子进程工作目录。`MaxLineLength` 设置单条入站 JSON-RPC 消息的字节上限；省略或为 `0` 时使用 SDK 默认值（16 MiB），负数会被拒绝。该参数仅支持 stdio，不能用于 Streamable HTTP 或 SSE。连接关闭时先关闭子进程 stdin，等待 5 秒；仍未退出则发送 SIGTERM，再等待 5 秒后强制终止并回收子进程。远程服务器配置如下：
 
 ```go
 config := mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
@@ -104,6 +104,7 @@ config := mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
 | 字段 | 用途 |
 | --- | --- |
 | `mcpServers` | 服务器对象；key 用于工具名前缀 |
+| `type` | 可省略；`stdio` 使用子进程，`http` 使用 Streamable HTTP，`sse` 使用 legacy HTTP+SSE。省略时按 `command` / `url` 推断为 stdio / Streamable HTTP |
 | `disabled` | 默认 `false`；`true` 时不连接、不启动子进程，也不暴露任何工具 |
 | `disabledTools` | 默认空数组；指定此服务器要禁用的原始工具名，精确匹配 |
 | `command` | stdio 子进程命令，与 `url` 互斥 |
@@ -111,8 +112,23 @@ config := mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
 | `env` | 子进程环境变量覆盖，值为字符串，可省略 |
 | `dir` | 子进程工作目录，可省略；相对路径基于当前进程工作目录 |
 | `maxLineLength` | stdio 单条入站消息上限，单位为字节；`0` 或省略使用默认 16 MiB，`67108864` 为 64 MiB；不允许负数 |
-| `url` | Streamable HTTP 地址，仅接受 HTTP / HTTPS |
+| `url` | Streamable HTTP 或 SSE 地址，仅接受 HTTP / HTTPS，与 `command` 互斥 |
 | `headers` | HTTP 请求头，值为字符串，可省略 |
+
+旧版 SSE 服务需显式指定 `type: "sse"`，例如：
+
+```json
+{
+  "mcpServers": {
+    "xunlei-download": {
+      "type": "sse",
+      "url": "https://your-mcp-server.example/sse"
+    }
+  }
+}
+```
+
+SSE 使用官方 SDK 的 `SSEClientTransport`，先建立 GET 事件流，再向服务返回的会话地址 POST 消息；与 Streamable HTTP 共用 `headers` 和 `HTTPClient` 配置。不会根据 URL 路径猜测协议，也不会自动切换协议。未知 `type`、`stdio` 搭配 `url`、`http` / `sse` 搭配 `command` 都会在连接前报错。
 
 读取文件后，直接把配置传给 Runtime：
 

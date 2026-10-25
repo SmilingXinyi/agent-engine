@@ -9,9 +9,12 @@ type Config struct {
 	Servers map[string]ServerConfig `json:"mcpServers"`
 }
 
-// ServerConfig selects exactly one transport: Command for stdio or URL for
-// Streamable HTTP. HTTPClient can supply caller-specific TLS and timeout policy.
+// ServerConfig selects Command for stdio or URL for Streamable HTTP / SSE.
+// HTTPClient can supply caller-specific TLS and timeout policy.
 type ServerConfig struct {
+	// Type accepts stdio, http, or sse. Empty infers stdio from Command or
+	// Streamable HTTP from URL, preserving configurations without a type.
+	Type string `json:"type,omitempty"`
 	// Disabled skips the connection and all tools, even when no transport is configured.
 	Disabled bool `json:"disabled,omitempty"`
 	// DisabledTools matches original MCP tool names, before the server name prefix.

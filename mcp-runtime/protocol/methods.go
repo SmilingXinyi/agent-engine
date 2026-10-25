@@ -102,6 +102,19 @@ func (config Config) Validate() error {
 		if hasCommand == hasURL {
 			return fmt.Errorf("MCP server %q must configure exactly one of command or url", name)
 		}
+		switch server.Type {
+		case "":
+		case "stdio":
+			if !hasCommand {
+				return fmt.Errorf("MCP server %q type stdio requires command", name)
+			}
+		case "http", "sse":
+			if !hasURL {
+				return fmt.Errorf("MCP server %q type %s requires url", name, server.Type)
+			}
+		default:
+			return fmt.Errorf("MCP server %q has unsupported type %q: expected stdio, http or sse", name, server.Type)
+		}
 		if hasURL {
 			if server.MaxLineLength != 0 {
 				return fmt.Errorf("MCP server %q maxLineLength is only supported for stdio", name)

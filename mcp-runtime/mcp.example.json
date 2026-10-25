@@ -13,6 +13,11 @@
       "env": {},
       "dir": "/tmp"
     },
+    "legacy-sse": {
+      "disabled": true,
+      "type": "sse",
+      "url": "https://mcp.example.com/sse"
+    },
     "remote": {
       "disabled": true,
       "url": "https://mcp.example.com/mcp",
