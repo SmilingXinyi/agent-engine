@@ -6,9 +6,10 @@
 
 - `ai-sdk`: 核心 AI SDK 模块。
 - `ai-tool-loop`: 顺序模型/工具循环、生命周期 Hook 和执行记录，参见[使用说明](./ai-tool-loop/README_cn.md)。
+- `ai-tools`: 可独立验证的内置文件与 Shell 工具，支持 JSON 显式启用／禁用，参见[使用说明](./ai-tools/README_cn.md)。
 - `agent`: Prompt 与历史上下文组织，委托 AI Tool Loop 执行，参见[使用说明](./agent/README_cn.md)。
 - `agent-skill`: 本地 SKILL.md 解析、技能目录和按需读取工具，参见[使用说明](./agent-skill/README_cn.md)。
-- `mcp-runtime`: MCP stdio / Streamable HTTP 连接、工具发现及执行适配，参见[使用说明](./mcp-runtime/README_cn.md)。
+- `mcp-runtime`: MCP stdio / Streamable HTTP / legacy SSE 连接、工具发现及执行适配，参见[使用说明](./mcp-runtime/README_cn.md)。
 
 ## 开发规范
 
@@ -41,12 +42,12 @@ go run ./examples/remote-desktop-agent/main.go ./examples/remote-desktop-agent/o
 执行测试：
 
 ```bash
-go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./mcp-runtime/...
+go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/...
 ```
 
 ## 历史实现的取舍
 
-`out/` 是历史参考代码。新框架保持单向依赖：`agent → ai-tool-loop → ai-sdk`，`agent-skill` 与 `mcp-runtime` 提供 loop 工具，由调用方组装。Agent 不加载目录、连接 MCP、创建 Provider 或保存会话。
+`out/` 是历史参考代码。新框架保持单向依赖：`agent → ai-tool-loop → ai-sdk`，`ai-tools`、`agent-skill` 与 `mcp-runtime` 提供 loop 工具，由调用方组装。Agent 不加载目录、连接 MCP、创建 Provider 或保存会话。
 
 | 历史能力 | 当前处理 | 原因 |
 | --- | --- | --- |
@@ -55,7 +56,8 @@ go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./mcp-runt
 | MCP stdio / HTTP、环境变量、headers、分页、连接释放 | 保留现有实现；直接提供 loop Tool | 去掉 Engine Tool / Loop Tool 双向适配 |
 | MCP schema 校验 | 补齐根 type 校验；HTTP header 名和值提前校验 | 启动时发现错误，避免执行期间才失败 |
 | MCP JSON 参数经 map[string]any 转换 | 改为保留原始 JSON 值 | 防止大整数精度丢失 |
-| MCP legacy SSE、重连参数、常驻 GET SSE | 暂不引入；当前 stdio 和 Streamable HTTP 足够 | 有具体服务需求后再扩展传输，不扩大默认配置 |
+| MCP legacy SSE | 通过显式 type 配置接入官方 SDK SSEClientTransport | 兼容旧服务，不按 URL 猜测协议或自动切换 |
+| MCP 重连参数、Streamable HTTP 常驻 GET SSE | 暂不引入 | 有具体服务需求后再扩展，不扩大默认配置 |
 | Engine 历史工具调用/结果校验 | 重写到 Agent 的上下文校验中 | 不将孤立、错配、未完成的工具批次传给模型 |
 | Engine 工厂、重复消息类型、生命周期桥接、DebugSink | 由 SDK Client / Hooks 和 loop 记录承担 | 一种协议、一套循环、一套可观测性，不建第二个抽象层 |
 | Engine 按消息数裁剪、隐式 system 覆盖、工具环境注入 | ai-tool-loop 按完整轮次裁剪模型输入，system 始终保留；其他能力暂不引入 | 保持工具批次完整及完整执行记录；消息与参数保持显式输入 |

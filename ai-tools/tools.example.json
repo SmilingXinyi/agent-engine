@@ -1,0 +1,22 @@
+{
+  "builtinTools": {
+    "read_file": {},
+    "list_directory": {},
+    "write_file": { "disabled": true },
+    "apply_patch": { "disabled": true },
+    "shell": { "disabled": true }
+  },
+  "filesystem": {
+    "root": ".",
+    "maxReadBytes": 1048576,
+    "maxWriteBytes": 1048576,
+    "maxPatchBytes": 2097152,
+    "maxEntries": 1000
+  },
+  "shell": {
+    "dir": ".",
+    "executable": "sh",
+    "timeoutSeconds": 30,
+    "maxOutputBytes": 65536
+  }
+}

@@ -66,3 +66,30 @@ A directory stays readable when each file has one job and the directory has few 
 - Outside `protocol`, group code by responsibility (lifecycle, hooks, one backend). The `types.go` / `methods.go` split is reserved for the contract package.
 - Keep an implementation package flat. It depends on `protocol`, not on the module root.
 - `*_test.go` files sit next to the code they test. They are the only extra files a package adds for tests.
+
+## 3. Built-in Tools (`ai-tools`)
+
+`ai-tools` is one Go module for reusable built-in tool implementations. Group tools into flat capability packages such as `filesystem/` and `shell/`; related tools may share a package and helpers. Do not create a separate Go module for every tool or pre-create directories for unimplemented capabilities.
+
+### 3.1 Contract and dependencies
+
+- Constructors return `ai-tool-loop/protocol.Tool` directly. Do not introduce a second Tool interface, type alias, execution loop, or registry abstraction.
+- Each capability package owns its tool definitions, input validation, execution, and adjacent tests. Inject runtime dependencies and options through constructors; do not obtain application state from Agent or global variables.
+- Public configuration and result types belong in `ai-tools/protocol/types.go`; their methods and configuration parsing belong in `ai-tools/protocol/methods.go`. Capability packages depend on protocol, never on the `ai-tools` module root.
+- Production code does not depend on Agent, MCP implementations, or model providers. Callers combine built-in, Skill, and MCP tools and pass them to the existing loop/Agent.
+
+### 3.2 Explicit configuration and lifecycle
+
+- The module root assembles explicitly selected tools. No `init` registration, implicit enabling, automatic MCP connection, or tool execution during construction.
+- JSON configuration uses `builtinTools` keyed by exact tool name, with an optional `disabled` boolean. Unlisted or disabled tools are excluded from both model-visible definitions and executable tools. Reject unknown tool names and malformed settings.
+- Validate dependencies only for enabled tools. Keep built-in configuration separate from the MCP config parser; a combined application config belongs to the caller.
+- Keep tool availability separate from per-call approval. Use the loop's existing `ConfirmTool`, hooks, context, and execution records.
+- Document resource ownership and configuration reload behavior. File tools enforce root-relative access during filesystem operations; a Shell working directory is not a filesystem sandbox.
+- Patch tools validate all hunks before changing a file, reject mismatched or ambiguous context, and use a same-directory temporary file replacement. Document the supported diff format, size limits, symlink policy, and concurrent-writer limitations.
+
+### 3.3 Independent verification
+
+- Every implemented capability must have tests that exercise observable behavior without a live model or MCP server. Verify real filesystem effects in temporary directories and process behavior through controlled commands or injected backends.
+- Cover meaningful boundaries: malformed input, path traversal and escaping symlinks, size limits, execution failures, cancellation, and timeouts where applicable. Verify configuration exclusions prevent execution through the existing tool loop.
+- Test platform-dependent behavior on supported platforms; make skipped prerequisites explicit. Add a real backend before exposing a new tool, rather than shipping placeholder executors.
+- Run `go test ./ai-tools/...` for module changes and the workspace suite when shared contracts or integration change. Use `go test -race ./ai-tools/...` when process or concurrent execution behavior changes.
