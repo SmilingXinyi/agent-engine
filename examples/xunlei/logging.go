@@ -55,32 +55,39 @@ func modelHooks(output io.Writer) aiprot.Hooks {
 func executionHooks(output io.Writer) loopprot.Hooks {
 	return loopprot.Hooks{
 		OnRunStart: func(_ context.Context, info loopprot.RunStartInfo) error {
-			fmt.Fprintf(output, "[run start] id=%s\n", info.RunID)
+			confirmation := "off"
+			if info.Request.Options.ConfirmTool != nil {
+				confirmation = string(info.Request.Options.ToolDenialPolicy)
+			}
+			fmt.Fprintf(output, "[run start] id=%s confirmation=%s\n", info.RunID, confirmation)
 			return nil
 		},
 		OnStepStart: func(_ context.Context, info loopprot.StepStartInfo) error {
-			fmt.Fprintf(output, "\n[step %d] request=%s messages=%d\n", info.Step, info.RequestID, len(info.Request.Messages))
+			fmt.Fprintf(output, "\n[step %d] request=%s history_messages=%d\n", info.Step, info.RequestID, len(info.Request.Messages))
 			return nil
 		},
 		OnToolStart: func(_ context.Context, info loopprot.ToolStartInfo) error {
-			fmt.Fprintf(output, "[tool start] step=%d request=%s id=%q name=%s\narguments=%s\n", info.Step, info.RequestID, info.Call.ID, info.Call.Name, printableJSON(info.Call.Arguments))
+			fmt.Fprintf(output, "[tool start] step=%d request=%s id=%q name=%s status=pending\narguments=%s\n", info.Step, info.RequestID, info.Call.ID, info.Call.Name, printableJSON(info.Call.Arguments))
 			return nil
 		},
 		OnToolEnd: func(_ context.Context, info loopprot.ToolEndInfo) error {
+			if info.Confirmation != nil {
+				fmt.Fprintf(output, "[tool decision] id=%q approved=%v reason=%q\n", info.Call.ID, info.Confirmation.Approved, info.Confirmation.Reason)
+			}
 			fmt.Fprintf(output, "[tool end] step=%d id=%q name=%s is_error=%v duration=%s error=%v\n", info.Step, info.Call.ID, info.Call.Name, info.Result.IsError, info.Duration.Round(time.Millisecond), info.Error)
 			logToolContent(output, info.Call.Name+" id="+info.Call.ID, info.Result)
 			return nil
 		},
 		OnRunEnd: func(_ context.Context, info loopprot.RunEndInfo) error {
-			fmt.Fprintf(output, "[run end] id=%s stop=%s steps=%d executed_tools=%d tokens=%d duration=%s error=%v\n", info.RunID, info.Result.StopReason, len(info.Result.Steps), len(info.Result.ToolCalls), info.Result.Usage.TotalTokens, info.Duration.Round(time.Millisecond), info.Error)
-			executed := make(map[string]bool)
+			fmt.Fprintf(output, "[run end] id=%s stop=%s steps=%d tool_calls=%d tokens=%d duration=%s error=%v\n", info.RunID, info.Result.StopReason, len(info.Result.Steps), len(info.Result.ToolCalls), info.Result.Usage.TotalTokens, info.Duration.Round(time.Millisecond), info.Error)
+			handled := make(map[string]bool)
 			for _, record := range info.Result.ToolCalls {
 				if record.Step == len(info.Result.Steps) {
-					executed[record.Call.ID] = true
+					handled[record.Call.ID] = true
 				}
 			}
 			for _, call := range info.Result.LastResponse.Message.ToolCalls() {
-				if !executed[call.ID] {
+				if !handled[call.ID] {
 					fmt.Fprintf(output, "[tool not executed] id=%q name=%s stop=%s\n", call.ID, call.Name, info.Result.StopReason)
 				}
 			}
@@ -89,7 +96,7 @@ func executionHooks(output io.Writer) loopprot.Hooks {
 	}
 }
 
-// Include all textual UIA/OCR results, even empty matches and tool errors.
+// Include textual tool results and errors alongside image payload sizes.
 // Omit image bytes from the log without altering the actual tool response.
 func logToolContent(output io.Writer, label string, result aiprot.ToolResult) {
 	if len(result.Content) == 0 {

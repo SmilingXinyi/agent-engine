@@ -4,7 +4,7 @@
 
 ## 迅雷 Agent
 
-运行 `go run ./examples/xunlei/*.go`，由 Agent 通过 `desktop-agent-remote` 启动远程迅雷、点击顶部“新建”、填入配置的链接并点击下载，通过 `tiny-ocr-mcp` 对最新截图核验对应任务出现在列表。配置、参数和流程见 [迅雷示例](xunlei/README_cn.md)。
+运行 `go run ./examples/xunlei/{main,desktop,logging,confirmation}.go -history-messages 10`，由视觉模型直接观察截图，通过 MCP 工具完成迅雷下载任务；示例自动加载 `mcp.json` 中所有未禁用的服务，遵循 `disabled` 和 `disabledTools` 配置。system prompt 仅来自 `xunlei/prompt.md`，任务消息只提供显示器索引、文件名和下载 URL。实际模型请求最多保留 10 条消息（包含系统提示、原始任务和最新截图），模型结束后不再追加核验流程。模型必须支持图像输入和工具调用。设置 `AGENT_TOOL_CONFIRMATION=continue` 或 `stop` 可启用终端执行确认，`off` 关闭。配置、参数和流程见 [迅雷示例](xunlei/README_cn.md)。
 
 ## 手机 Agent 与服务验证
 

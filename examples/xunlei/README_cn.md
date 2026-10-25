@@ -1,62 +1,82 @@
-# 迅雷 Agent
+# 迅雷视觉 Agent
 
-从仓库根目录运行：
+从仓库根目录运行，关闭逐工具询问并限制实际请求最多 10 条 messages：
 
 ```bash
-go run ./examples/xunlei/*.go
+AGENT_TOOL_CONFIRMATION=off go run ./examples/xunlei/{main,desktop,logging,confirmation}.go -history-messages 10
 ```
 
-入口直接使用本仓库的 `agent`、`ai-sdk` 和 `mcp-runtime`：由模型观察远程桌面、选择工具并执行“启动迅雷 → 点击顶部新建 → 填入链接 → 点击下载 → 核查下载任务”。操作依据每次返回的窗口/UIA/OCR 信息，不保存或复用坐标。
+视觉模型直接观察截图，通过 MCP 工具完成迅雷下载任务。模型必须同时支持图像输入和工具调用。示例读取 MCP 配置，连接所有未禁用的服务，将其工具提供给模型。
 
-## 配置
+[`prompt.md`](prompt.md) 是唯一的 system prompt 来源，程序通过 `go:embed` 原样加载。操作方式、下载目标与结束条件均由该文件定义。UserPrompt 只提供本次运行的显示器索引、预期文件名和完整下载 URL；截图附加消息只标注图片，不追加操作指令。
 
-根目录 `.env` 或进程环境需要配置：
+## MCP 与模型配置
+
+默认读取 `examples/.agents/mcp.json`，可通过 `-config` 指定其他文件。配置示例：
+
+```json
+{
+  "mcpServers": {
+    "desktop-agent-remote": {
+      "disabledTools": [
+        "uia_list_windows", "uia_dump", "uia_find",
+        "uia_element_at", "uia_invoke", "uia_set_value"
+      ]
+    },
+    "tiny-ocr-mcp": { "disabled": true },
+    "tiny-image": { "disabled": false },
+    "xunlei-download": { "type": "sse", "url": "https://your-mcp-server.example/sse" }
+  }
+}
+```
+
+这是配置的节选；保留现有服务器的 `command`、`args`、`url` 等连接字段。入口不维护服务名白名单，也不强制要求桌面服务或特定启动参数。新增服务只需写入配置，重启后便会加载；`disabled: true` 跳过整个服务，`disabledTools` 屏蔽该服务的指定工具。`disabledTools` 填写原始工具名，不带服务名前缀。该配置由使用同一文件的入口共享，无需启动的服务可禁用，或为迅雷指定单独的配置文件。
+
+日志 `[mcp start] servers=...` 列出本次准备连接的服务，`[tool registered] ...` 列出实际发现并提供给模型的工具。
+
+迅雷官方 SSE 接口需配置 `type: "sse"`。省略 `type` 时，`command` 使用 stdio，`url` 使用 Streamable HTTP；也可显式设置 `type: "stdio"` 或 `type: "http"`。SSE 与 Streamable HTTP 均支持 `headers`。
+
+根目录 `.env` 或进程环境配置：
 
 ```dotenv
-AGENT_LLM_MODEL=你的模型名
-AGENT_LLM_BASE_URL=你的兼容OpenAI服务地址
+AGENT_LLM_MODEL=支持图像和工具调用的模型
+AGENT_LLM_BASE_URL=兼容OpenAI的服务地址
 AGENT_LLM_API_KEY=
+AGENT_TOOL_CONFIRMATION=off
 ```
 
-模型需要支持工具调用。截图在本地交给 OCR，模型接收文字、识别框和中心坐标，因此无需图像输入能力。进程环境变量优先于 `.env`；也支持 `AGENT_MODEL`、`AGENT_LLM_TOKEN` 作为备用变量名。
+进程环境优先于 `.env`。模型名兼容 `AGENT_MODEL`，密钥兼容 `AGENT_LLM_TOKEN`；API Key 可选。各 MCP 服务按自身连接配置启动，任一启用服务连接失败时程序报错。
 
-`download-url.txt` 已放入本次指定的完整下载链接；文件只包含一行原始 URL。程序保留其查询参数，并从 Content-Disposition 参数及 URL 路径提取可能的文件名，供模型和最终截图核验。可通过 `-url-file` 指定其他链接文件。
+运行前创建本地 `download-url.txt`，保存一行完整下载 URL，或通过 `-url-file` 指定其他文件；该本地文件已加入 gitignore。程序原样保留签名和查询参数，从 Content-Disposition 参数和 URL 路径提取可能的文件名，供视觉模型检查对应任务。
 
-新建任务输入框优先通过 `uia_set_value` 的 ValuePattern 录入；不可用时聚焦输入框、清空并用 `type_text` 输入。随后点击“立即下载”或实际界面的下载按钮。遇到重复任务时先检查已有任务；链接失效、鉴权错误等按界面结果报告，不反复提交。运行会调用真实模型并在远程迅雷中创建下载任务。
+## 截图与上下文
 
-读取 `examples/.agents/mcp.json`，只启动 `desktop-agent-remote` 和 `tiny-ocr-mcp`。桌面配置必须明确包含非空 `--remote` 参数，远程 Windows 桌面服务需已启动，两个本机 MCP 文件需具备执行权限并通过 macOS 首次打开授权。
+模型直接调用原生 MCP 工具，按照工具 schema 选择截图模式与参数。`-display` 指定本次目标显示器，作为任务数据提供给模型。程序仅将工具返回的图片适配为模型的图像输入，不自动转换格式、不缩放，也不修改截图工具的定义或执行器。
 
-`observe_desktop` 每次获取指定显示器的完整原始截图，将截图数据保存为权限 0600 的临时文件，再通过 `tiny-ocr-mcp_ocr(image_path)` 识别同一张截图。结束或失败时删除临时文件。图片 base64 不进入模型历史，也不作为 OCR MCP 大消息传输；本流程无需启动 tiny-image 或 mobile-mcp。
+`-history-messages 10` 按实际发给模型的消息条数计数，包含 system、原始任务、assistant、tool 及附加的截图 user 消息，最多 10 条，不是 10 轮。始终保留 system 与原始任务；旧 assistant/tool 批次整体移除，所以实际条数可能小于 10。只发送最新截图；完整运行记录仍保留。若最新完整工具批次本身无法放进预算则报错，不拆散工具调用或静默丢弃最新结果。该参数最小为 5。
 
-优先通过 UIA 定位“新建”并调用 InvokePattern；UIA 不可用时，使用原始截图 OCR 的坐标移动光标、点击。截图未缩放，按照本次显示器起点和桌面工具的物理像素约定处理坐标。
+日志 `[vision request] messages=... limit=10` 显示真正发送的消息数量。`[step ...] history_messages=...` 是裁剪前的内部历史数量，可能大于 10。此消息上限由迅雷示例的视觉适配器实现，不改变其他示例或通用 loop 的按轮裁剪行为。
 
-提示词按“定位窗口 → 打开任务框 → 录入并确认 → 提交一次 → 核验”五个阶段推进。允许独立查询或已确定的操作与后续观察在同一轮按顺序执行；需要先确认焦点或内容的写入、提交分开进行。同批工具出错不会自动取消后续调用，因此不会将未经确认的聚焦、写入和下载直接打包。
+模型自然结束后，程序记录执行结束及循环累计的 `loop_tokens`。程序不再启动额外的截图或模型核验流程；自然结束仅表示模型停止调用工具，不单独证明下载成功。
 
-任务框打开后操作绑定该框，避免重新聚焦主窗口使任务框消失。UIA 查询限定次数，找到 selector 后复用并直接 Invoke/SetValue；键盘兜底先确认输入焦点，内容落入其他应用立即停止。同一阶段连续两次无进展即报告阻碍。坐标诊断只允许一次候选映射验证，具体位置和屏幕参数不写入提示词。这些是对模型的流程约束，实际效果仍需运行验证。
+## 执行确认、参数与日志
 
-## 运行参数和结果
+`AGENT_TOOL_CONFIRMATION=off`、未设置或留空时不询问。`continue` / `stop` 启用终端确认，显示工具名和参数：输入 `y` / `yes` 并回车批准，其他输入或直接回车拒绝。`continue` 拒绝后反馈模型继续，`stop` 拒绝即终止；EOF、读取错误、Ctrl+C 或总超时均终止等待。
 
 ```bash
-go run ./examples/xunlei/*.go \
+AGENT_TOOL_CONFIRMATION=off go run ./examples/xunlei/{main,desktop,logging,confirmation}.go \
   -config examples/.agents/mcp.json \
   -env .env \
   -url-file examples/xunlei/download-url.txt \
-  -log-file examples/xunlei/run.log \
-  -display 0 \
-  -max-steps 40 \
-  -timeout 10m
+  -display 0 -history-messages 10 -max-steps 40 -timeout 10m
 ```
 
-`-display` 选择要观察的远程显示器，迅雷需位于该显示器上。Ctrl+C 取消执行；日志显示模型调用、工具名、耗时和错误状态。
+日志同时输出到 console 和 `examples/xunlei/run.log`，追加运行开始/结束时间、模型调用、工具参数、结果、usage、确认决定与截图耗时。图片 base64 仅显示字节数；长链接和签名参数仍可能出现在工具调用日志。`-log-file` 可换路径，空字符串仅输出 console。
 
-日志同时输出到 console 和 `examples/xunlei/run.log`，文件按次追加，每次执行带开始时间和结束状态；可通过 `-log-file` 换路径，传空字符串则只输出 console。日志文件已加入 gitignore。
+`[tool start] status=pending` 表示进入工具处理，可能等待确认；`[tool decision]` 表示批准或拒绝，`[tool end]` 表示处理结束。工具耗时包含确认等待。`[run end] tool_calls=...` 包含拒绝记录，不能据此判断任务成功。
 
-`[tool start]` 标记实际进入执行的工具调用，包含轮次、请求 ID、调用 ID 和格式化参数；`[tool end]` 显示工具错误标志、具体执行错误和耗时；`[tool content]` 完整打印实际返回的窗口信息、UIA 匹配/selector/Pattern/空结果及 OCR 文字和识别框。图像 base64 只显示字节数，不淹没日志。`[observe capture ...]` 与 `[observe OCR ...]` 分别显示截图和 OCR 阶段，`[verify ...]` 记录结束后的独立截图核验结果。
+```bash
+go test ./examples/xunlei/*.go
+```
 
-`[model tool call] status=requested` 仅代表模型提出调用；只有出现 `[tool start]` 才表示实际开始执行。`[run end]` 汇总真实调用记录数、停止原因和 token 用量；模型已提出却未执行的最后一批调用另标为 `[tool not executed]`，例如达到 `max-steps` 时不执行最后一轮提出的工具调用。
-
-模型 response 日志与 `remote-desktop-agent` 一致：`[model result]` 输出轮次、请求 ID、finish_reason、耗时和 input/output/total tokens；`[model text]` 保留正文及原始换行，正文为空时明确提示；模型返回 reasoning 内容时通过 `[model reasoning]` 输出；`[model tool call]` 输出调用 ID、工具名、参数字节数和转义后的 `raw_arguments`。这些日志在工具调用校验前打印，校验失败的调用也可看到模型原始返回。
-
-模型自然停止后，程序独立重新截图并 OCR，最多观察三次，要求对应文件名出现在界面、链接输入框特征不再可见，且没有检测到下载失败/链接失效/鉴权失败等提示，才报告任务已出现在列表。该检查不证明文件已经完成传输；模型还应检查目标行的实际任务状态。错误提示使用整个可见画面做保守判断，其他任务报错也可能导致“未确认”；OCR 漏识别或文件名被截断同样可能无法通过核验。
-
-模型错误、达到步数上限、超时或最终 OCR 无法确认均以非零退出码结束。长链接和签名参数可能出现在 response 工具调用日志中。
+测试使用模拟模型与工具，不连接远程桌面。运行程序须使用显式源文件列表，避免 `*.go` 包含测试文件导致 `go run` 报错。
