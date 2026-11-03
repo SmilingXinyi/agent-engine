@@ -1,5 +1,8 @@
 # ai-tool-loop
 
+安装已发布模块：`go get github.com/SmilingXinyi/agent-engine/ai-tool-loop@v0.1.0`。
+Go 子模块标签为 `ai-tool-loop/v0.1.0`；变更和迁移说明见 [CHANGELOG](CHANGELOG.md)。
+
 通过 `ai-sdk.Client` 执行顺序模型/工具循环。模型调用和工具执行只有一套实现；`agent` 负责组织 Prompt/History，`mcp-runtime` 负责连接与工具适配。
 
 ```text

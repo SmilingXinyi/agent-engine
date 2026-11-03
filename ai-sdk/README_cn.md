@@ -8,8 +8,10 @@
 
 要求 Go 1.25+，只有标准库依赖。
 
-使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.6.0` 固定版本。
-Go 子模块发布标签为 `ai-sdk/v0.6.0`。这一版把 `ChatStream` 改名为 `StreamChat`。
+使用 `go get github.com/SmilingXinyi/agent-engine/ai-sdk@v0.7.0` 固定版本。
+Go 子模块发布标签为 `ai-sdk/v0.7.0`。这一版为 `protocol.ToolCall`、`ToolResult` 和
+`ToolDefinition` 增加显式 `Clone()`，复制协议字节与 JSON 形状的扩展数据；应用自定义对象仍共享。
+原生流式方法使用 `StreamChat`（在 v0.6.0 从 `ChatStream` 改名）。
 `FirstFrameTimeout` 与 `IdleTimeout` 仍作用于 `Stream` 和 `StreamChat`，零值关闭。
 超时返回 `ErrorTimeout`，并用 `TimeoutKind` 区分 `first_frame` 和 `idle`。
 `Generate` 与 `Chat` 不使用这两项。`openai.Accumulator` 仍把 Chat Completions 的 SSE `data`

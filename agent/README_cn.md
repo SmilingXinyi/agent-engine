@@ -1,5 +1,8 @@
 # agent
 
+安装已发布模块：`go get github.com/SmilingXinyi/agent-engine/agent@v0.1.0`。
+Go 子模块标签为 `agent/v0.1.0`；变更和迁移说明见 [CHANGELOG](CHANGELOG.md)。
+
 组织 Prompt 和历史消息，并委托独立的 `ai-tool-loop` 执行非流式模型/工具循环。`Model` 必填，`UserPrompt` 与有效的 `History` 至少提供一项，`SystemPrompt` 可以为空。消息顺序为 `system → history → user`。
 
 ```go

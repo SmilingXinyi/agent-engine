@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.7.0 — 2026-11-04 — explicit tool snapshots
+
+- Add `Clone()` on `protocol.ToolCall`, `ToolResult`, and `ToolDefinition` so
+  callers can snapshot arguments, nested results, and schemas without reflection.
+- Reuse these methods throughout message and request cloning. JSON-shaped
+  extension data is copied; application-owned objects retain SDK sharing rules.
+- The Go module release tag is `ai-sdk/v0.7.0`.
+
 ## v0.6.0 — 2026-10-21 — StreamChat
 
 - Rename `ChatStream` to `StreamChat`. Native map messages still use `ChatRequest`
