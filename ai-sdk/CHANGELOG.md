@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.0 — 2026-10-21 — StreamChat
+
+- Rename `ChatStream` to `StreamChat`. Native map messages still use `ChatRequest`
+  with `Chat` and `StreamChat`. `protocol.ModelRequest.Messages` stays `[]Message`.
+  The Go module release tag is `ai-sdk/v0.6.0`.
+
 ## v0.5.0 — 2026-10-19 — stream stall timeouts
 
 - Add `FirstFrameTimeout` and `IdleTimeout` on `openai.Config`, `protocol.ModelRequest`,

@@ -34,7 +34,7 @@ fmt.Println(result.StopReason, result.Usage.TotalTokens, err)
 
 `Run` 在入口获取输入快照；模型调用复用 SDK 的输入隔离，不在调用前再复制整个请求。Hook 和确认回调各自获取独立快照，工具参数在交给执行器前复制，工具结果在进入记录时复制。执行循环取得工具记录的所有权后直接保存；对外结果中的 `LastResponse`、各步响应和消息仍保持独立。
 
-每一步模型调用都会带上 `Temperature`、`MaxOutputTokens`、`ToolChoice`、`Reasoning`、`OutputFormat` 和 `ProviderOptions`。这些字段与 `ai-sdk` 的 `ModelRequest` 含义相同，循环不改写、不猜测别名。消息上的 `ProviderOptions` 和 `ContentProvider` 内容随消息原样进入后续调用；模型响应里的原生字段留在 `ModelResponse.Raw`，不会被写回请求扩展。`Metadata` 会复制到每一步，其中 `run_id`、`request_id`、`step` 由循环写入并覆盖同名调用方值。流式超时只作用于 SDK 的 `Stream` / `ChatStream`，本模块仍只使用非流式 `Generate`。
+每一步模型调用都会带上 `Temperature`、`MaxOutputTokens`、`ToolChoice`、`Reasoning`、`OutputFormat` 和 `ProviderOptions`。这些字段与 `ai-sdk` 的 `ModelRequest` 含义相同，循环不改写、不猜测别名。消息上的 `ProviderOptions` 和 `ContentProvider` 内容随消息原样进入后续调用；模型响应里的原生字段留在 `ModelResponse.Raw`，不会被写回请求扩展。`Metadata` 会复制到每一步，其中 `run_id`、`request_id`、`step` 由循环写入并覆盖同名调用方值。流式超时只作用于 SDK 的 `Stream` / `StreamChat`，本模块仍只使用非流式 `Generate`。
 
 ## 执行与停止
 
