@@ -33,7 +33,7 @@ func (request ModelRequest) Clone() ModelRequest {
 	}
 	request.Tools = append([]ToolDefinition(nil), request.Tools...)
 	for index := range request.Tools {
-		request.Tools[index].InputSchema = append(json.RawMessage(nil), request.Tools[index].InputSchema...)
+		request.Tools[index] = request.Tools[index].Clone()
 	}
 	request.ProviderOptions = utils.CloneJSONMap(request.ProviderOptions)
 	request.Metadata = utils.CloneMap(request.Metadata)
@@ -119,7 +119,7 @@ func (message Message) ToolCalls() []ToolCall {
 	var calls []ToolCall
 	for _, part := range message.Parts {
 		if part.Type == ContentToolCall && part.ToolCall != nil {
-			calls = append(calls, cloneToolCall(*part.ToolCall))
+			calls = append(calls, part.ToolCall.Clone())
 		}
 	}
 	return calls
@@ -130,7 +130,7 @@ func (message Message) ToolResults() []ToolResult {
 	var results []ToolResult
 	for _, part := range message.Parts {
 		if part.Type == ContentToolResult && part.ToolResult != nil {
-			results = append(results, cloneToolResult(*part.ToolResult))
+			results = append(results, part.ToolResult.Clone())
 		}
 	}
 	return results
@@ -152,15 +152,23 @@ func (result ToolResult) Text() string {
 	return text.String()
 }
 
-func cloneToolCall(call ToolCall) ToolCall {
+// Clone copies the raw argument bytes.
+func (call ToolCall) Clone() ToolCall {
 	call.Arguments = append(json.RawMessage(nil), call.Arguments...)
 	return call
 }
 
-func cloneToolResult(result ToolResult) ToolResult {
+// Clone copies content and JSON-shaped metadata.
+func (result ToolResult) Clone() ToolResult {
 	result.Content = cloneContentParts(result.Content)
 	result.Metadata = utils.CloneJSONMap(result.Metadata)
 	return result
+}
+
+// Clone copies the raw input schema bytes.
+func (definition ToolDefinition) Clone() ToolDefinition {
+	definition.InputSchema = append(json.RawMessage(nil), definition.InputSchema...)
+	return definition
 }
 
 func cloneContentParts(parts []ContentPart) []ContentPart {
@@ -174,11 +182,11 @@ func cloneContentParts(parts []ContentPart) []ContentPart {
 			result[index].Media = &media
 		}
 		if part.ToolCall != nil {
-			call := cloneToolCall(*part.ToolCall)
+			call := part.ToolCall.Clone()
 			result[index].ToolCall = &call
 		}
 		if part.ToolResult != nil {
-			toolResult := cloneToolResult(*part.ToolResult)
+			toolResult := part.ToolResult.Clone()
 			result[index].ToolResult = &toolResult
 		}
 	}

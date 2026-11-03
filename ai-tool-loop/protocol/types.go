@@ -70,7 +70,9 @@ type ToolDeniedError struct {
 // Request is one sequential execution. Generation settings are copied onto
 // every model call. Message.ProviderOptions travel with Messages.
 // MetadataRunID, MetadataStep, and the SDK request ID are reserved and
-// overwritten for each call.
+// overwritten for each call. Extension data follows SDK Clone rules: use acyclic
+// JSON-shaped data for isolation; custom application objects remain shared.
+// Callers must not mutate inputs concurrently with execution or cloning.
 type Request struct {
 	Model           string
 	Messages        []aiprot.Message
@@ -134,8 +136,9 @@ type ToolCallRecord struct {
 	FinishedAt   time.Time
 }
 
-// Hooks receive independent snapshots. Returning an error stops execution;
-// end-hook errors are joined with the original error. Panics become errors.
+// Hooks receive independent protocol-data snapshots (see Request). Returning
+// an error stops execution; end-hook errors are joined with the original error.
+// Panics become errors.
 type Hooks struct {
 	OnRunStart  func(context.Context, RunStartInfo) error
 	OnRunEnd    func(context.Context, RunEndInfo) error

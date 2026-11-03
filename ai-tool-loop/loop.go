@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
 )
 
 type Loop struct{ client *ai.Client }
@@ -63,7 +63,9 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 	if err != nil {
 		return result, err
 	}
-	result.Messages = utils.Clone(request.Messages)
+	// Elements remain read-only inside the run; a separate slice keeps appends
+	// from changing the initial request observed by run hooks.
+	result.Messages = slices.Clone(request.Messages)
 	startedAt := time.Now()
 	defer func() {
 		if err != nil {
@@ -127,15 +129,16 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 	if err = ctx.Err(); err != nil {
 		return true, err
 	}
-	response, callErr := loop.client.Generate(ctx, utils.Clone(modelRequest))
+	// Client.Generate snapshots its input before invoking the provider.
+	response, callErr := loop.client.Generate(ctx, modelRequest)
 	if response.Message.Role == "" {
 		response.Message.Role = aiprot.RoleAssistant
 	}
-	result.LastResponse = utils.Clone(response)
-	result.Steps[index].Response = utils.Clone(response)
+	result.LastResponse = response.Clone()
+	result.Steps[index].Response = response.Clone()
 	addUsage(&result.Usage, response.Usage)
 	if len(response.Message.Parts) > 0 {
-		result.Messages = append(result.Messages, utils.Clone(response.Message))
+		result.Messages = append(result.Messages, response.Message.Clone())
 	}
 	if callErr != nil || ctx.Err() != nil {
 		return true, errors.Join(callErr, ctx.Err())
@@ -160,8 +163,9 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 			return true, err
 		}
 		record, toolErr := executeTool(ctx, request.Options, result.RunID, requestID, step, tools, call)
-		result.ToolCalls = append(result.ToolCalls, utils.Clone(record))
-		toolResult := utils.Clone(record.Result)
+		// executeTool returns an owned record; callbacks have separate snapshots.
+		result.ToolCalls = append(result.ToolCalls, record)
+		toolResult := record.Result.Clone()
 		result.Messages = append(result.Messages, aiprot.Message{Role: aiprot.RoleTool, Parts: []aiprot.ContentPart{{Type: aiprot.ContentToolResult, ToolResult: &toolResult}}})
 		if toolErr != nil {
 			return true, toolErr

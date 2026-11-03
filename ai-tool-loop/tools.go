@@ -10,7 +10,6 @@ import (
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
 )
 
 func prepareTools(tools []protocol.Tool) (map[string]protocol.Tool, error) {
@@ -63,7 +62,7 @@ func toolCalls(message aiprot.Message) ([]aiprot.ToolCall, error) {
 }
 
 func executeTool(ctx context.Context, options protocol.RunOptions, runID, requestID string, step int, tools map[string]protocol.Tool, call aiprot.ToolCall) (record protocol.ToolCallRecord, err error) {
-	record = protocol.ToolCallRecord{Step: step, Call: utils.Clone(call), StartedAt: time.Now()}
+	record = protocol.ToolCallRecord{Step: step, Call: call.Clone(), StartedAt: time.Now()}
 	var executionErr error
 	defer func() {
 		observedErr := errors.Join(executionErr, err)
@@ -74,7 +73,7 @@ func executeTool(ctx context.Context, options protocol.RunOptions, runID, reques
 			}
 		}
 		record.Result.ToolCallID, record.Result.ToolName = call.ID, call.Name
-		record.Result = utils.Clone(record.Result)
+		record.Result = record.Result.Clone()
 		record.FinishedAt = time.Now()
 		endErr := notify(ctx, "tool end", options.Hooks.OnToolEnd, protocol.ToolEndInfo{
 			RunID: runID, Step: step, RequestID: requestID, Call: record.Call, Result: record.Result,
@@ -118,7 +117,7 @@ func executeTool(ctx context.Context, options protocol.RunOptions, runID, reques
 				return record, nil
 			}
 		}
-		record.Result, executionErr = safeExecute(ctx, tool.Execute, utils.Clone(call.Arguments))
+		record.Result, executionErr = safeExecute(ctx, tool.Execute, append(json.RawMessage(nil), call.Arguments...))
 	} else {
 		executionErr = fmt.Errorf("unknown tool %q", call.Name)
 	}
@@ -131,7 +130,7 @@ func confirmTool(ctx context.Context, confirm func(context.Context, protocol.Too
 			err = fmt.Errorf("tool confirmation panicked: %v", recovered)
 		}
 	}()
-	decision, err = confirm(ctx, utils.Clone(info))
+	decision, err = confirm(ctx, info.Clone())
 	if err != nil {
 		return decision, fmt.Errorf("tool confirmation: %w", err)
 	}

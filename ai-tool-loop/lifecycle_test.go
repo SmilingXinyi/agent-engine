@@ -231,6 +231,9 @@ func TestSnapshotsIsolateCallerProviderExecutorsAndHooks(t *testing.T) {
 			return nil
 		},
 		OnStepEnd: func(_ context.Context, info protocol.StepEndInfo) error {
+			if info.Request.Messages[0].Text() != "hello" || info.Request.Metadata["request_id"] != info.RequestID {
+				t.Fatal("provider or SDK hooks modified the step request")
+			}
 			info.Result.Response.Message.Parts[0].Text = "step end mutation"
 			if len(info.ToolCalls) > 0 {
 				info.ToolCalls[0].Call.Arguments[0] = '['
@@ -244,7 +247,22 @@ func TestSnapshotsIsolateCallerProviderExecutorsAndHooks(t *testing.T) {
 			return nil
 		},
 	}
-	result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
+	sdkHooks := aiprot.Hooks{
+		OnRequest: []aiprot.RequestHook{func(_ context.Context, info aiprot.RequestInfo) error {
+			info.Request.Messages[0].Parts[0].Text = "SDK request hook mutation"
+			info.Request.Tools[0].InputSchema[0] = '['
+			return nil
+		}},
+		OnResponse: []aiprot.ResponseHook{func(_ context.Context, info aiprot.ResponseInfo) error {
+			info.Request.Metadata["request_id"] = "SDK response hook mutation"
+			info.Response.Message.Parts[0].Text = "SDK response hook mutation"
+			if info.Response.Message.Parts[0].ToolCall != nil {
+				info.Response.Message.Parts[0].ToolCall.Arguments[0] = '['
+			}
+			return nil
+		}},
+	}
+	result, err := loop.New(ai.NewClient(provider, sdkHooks)).Run(context.Background(), request)
 	if err != nil || result.LastResponse.Message.Text() != "final" || providerCalls != 2 {
 		t.Fatalf("result=%#v error=%v", result, err)
 	}
@@ -264,5 +282,47 @@ func TestSnapshotsIsolateCallerProviderExecutorsAndHooks(t *testing.T) {
 	copy.Messages[0].Metadata["nested"].(map[string]any)["value"] = "copy mutation"
 	if result.Messages[0].Metadata["nested"].(map[string]any)["value"] != "safe" {
 		t.Fatal("result clone is shallow")
+	}
+}
+
+func TestRetainedHookSnapshotsStayIndependentAfterRun(t *testing.T) {
+	request := initialRequest()
+	request.Messages = append(make([]aiprot.Message, 0, 16), request.Messages...)
+	var start protocol.RunStartInfo
+	var end protocol.RunEndInfo
+	var toolEnd protocol.ToolEndInfo
+	request.Options.Hooks.OnRunStart = func(_ context.Context, info protocol.RunStartInfo) error { start = info; return nil }
+	request.Options.Hooks.OnRunEnd = func(_ context.Context, info protocol.RunEndInfo) error { end = info; return nil }
+	request.Options.Hooks.OnToolEnd = func(_ context.Context, info protocol.ToolEndInfo) error { toolEnd = info; return nil }
+	request.Tools = []protocol.Tool{{Definition: aiprot.ToolDefinition{Name: "first"}, Execute: func(context.Context, json.RawMessage) (aiprot.ToolResult, error) {
+		return aiprot.TextToolResult("safe result"), nil
+	}}}
+	models := 0
+	provider := scriptedProvider{generate: func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+		models++
+		if models == 1 {
+			return toolResponse(call("first")), nil
+		}
+		return textResponse("final"), nil
+	}}
+	result, err := loop.New(ai.NewClient(provider, aiprot.Hooks{})).Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(start.Request.Messages) != 1 || len(end.Request.Messages) != 1 {
+		t.Fatal("run request includes appended conversation")
+	}
+	start.Request.Messages[0].Parts[0].Text = "retained start mutation"
+	end.Request.Messages[0].Parts[0].Text = "retained end mutation"
+	end.Result.Messages[0].Parts[0].Text = "retained result mutation"
+	toolEnd.Call.Arguments[0] = '['
+	toolEnd.Result.Content[0].Text = "retained tool mutation"
+	if request.Messages[0].Text() != "hello" || result.Messages[0].Text() != "hello" ||
+		result.ToolCalls[0].Result.Text() != "safe result" || !json.Valid(result.ToolCalls[0].Call.Arguments) {
+		t.Fatal("retained hook snapshots alias caller or result")
+	}
+	result.ToolCalls[0].Result.Content[0].Text = "record mutation"
+	if result.Messages[2].ToolResults()[0].Text() != "safe result" {
+		t.Fatal("tool record aliases conversation result")
 	}
 }

@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
@@ -111,5 +112,40 @@ func TestModelCallDefaultHistoryWindow(t *testing.T) {
 	got := (Request{}).ModelCall(messages, "run", "request", 1).Messages
 	if len(got) != DefaultMaxHistoryRounds+1 || got[0].Role != aiprot.RoleSystem {
 		t.Fatalf("default window retained %d messages", len(got))
+	}
+}
+
+// Exercise the byte payloads and nested extensions typical of a long tool run.
+func BenchmarkRequestClone(b *testing.B) {
+	message := aiprot.TextMessage(aiprot.RoleTool, "tool output")
+	message.Parts[0].Data = json.RawMessage(`"` + strings.Repeat("x", 64*1024) + `"`)
+	message.Metadata = map[string]any{"nested": []any{map[string]any{"value": "safe"}}}
+	request := Request{Model: "model", Messages: make([]aiprot.Message, 20),
+		Tools: []Tool{{Definition: aiprot.ToolDefinition{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}},
+	}
+	for index := range request.Messages {
+		request.Messages[index] = message
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = request.Clone()
+	}
+}
+
+func TestCloneUsesSDKRulesForExtensions(t *testing.T) {
+	applicationObject := &struct{ Value string }{Value: "shared"}
+	request := Request{ProviderOptions: map[string]any{
+		"application": applicationObject,
+		"json":        map[string]any{"values": []any{json.RawMessage(`{"safe":true}`)}},
+	}}
+	copy := request.Clone()
+	sdkCopy := (aiprot.ModelRequest{ProviderOptions: request.ProviderOptions}).Clone()
+	if copy.ProviderOptions["application"] != applicationObject || copy.ProviderOptions["application"] != sdkCopy.ProviderOptions["application"] {
+		t.Fatal("application object sharing differs from SDK")
+	}
+	copy.ProviderOptions["json"].(map[string]any)["values"].([]any)[0].(json.RawMessage)[0] = '['
+	if !json.Valid(request.ProviderOptions["json"].(map[string]any)["values"].([]any)[0].(json.RawMessage)) {
+		t.Fatal("JSON extensions remained shared")
 	}
 }

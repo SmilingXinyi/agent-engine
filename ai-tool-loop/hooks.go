@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
 )
 
 func newID(prefix string) (string, error) {
@@ -17,7 +15,7 @@ func newID(prefix string) (string, error) {
 	return prefix + "_" + hex.EncodeToString(random[:]), nil
 }
 
-func notify[T any](ctx context.Context, name string, hook func(context.Context, T) error, info T) (err error) {
+func notify[T interface{ Clone() T }](ctx context.Context, name string, hook func(context.Context, T) error, info T) (err error) {
 	if hook == nil {
 		return nil
 	}
@@ -26,7 +24,7 @@ func notify[T any](ctx context.Context, name string, hook func(context.Context, 
 			err = fmt.Errorf("%s hook panicked: %v", name, recovered)
 		}
 	}()
-	if err := hook(ctx, utils.Clone(info)); err != nil {
+	if err := hook(ctx, info.Clone()); err != nil {
 		return fmt.Errorf("%s hook: %w", name, err)
 	}
 	return nil

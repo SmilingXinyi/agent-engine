@@ -28,7 +28,11 @@ fmt.Println(result.LastResponse.Message.Text())
 fmt.Println(result.StopReason, result.Usage.TotalTokens, err)
 ```
 
-`Request.Tools` 接收 `[]protocol.Tool`，每个工具为 SDK `ToolDefinition` 加必填的 `Execute` 函数。输入消息、定义、参数、执行记录及 Hook 快照相互隔离；metadata 使用可复制的无环数据，函数、error 和不可见结构字段保持原值。
+`Request.Tools` 接收 `[]protocol.Tool`，每个工具为 SDK `ToolDefinition` 加必填的 `Execute` 函数。输入消息、定义、参数、执行记录及 Hook 快照中的协议数据相互隔离。复制使用各协议类型的显式 `Clone()`，与 SDK 的规则一致：扩展字段使用无环的 JSON 数据（`map[string]any`、`[]any`、标量，以及支持的字节／字符串切片）；自定义对象指针、函数、channel 和 error 保持共享，不承诺隔离其内部状态。调用方不得在执行或复制期间并发修改输入；Clone 本身不是同步机制。
+
+通用反射工具 `ai-tool-loop/utils.Clone` 已移除；调用方应使用对应协议类型的 `.Clone()`。
+
+`Run` 在入口获取输入快照；模型调用复用 SDK 的输入隔离，不在调用前再复制整个请求。Hook 和确认回调各自获取独立快照，工具参数在交给执行器前复制，工具结果在进入记录时复制。执行循环取得工具记录的所有权后直接保存；对外结果中的 `LastResponse`、各步响应和消息仍保持独立。
 
 每一步模型调用都会带上 `Temperature`、`MaxOutputTokens`、`ToolChoice`、`Reasoning`、`OutputFormat` 和 `ProviderOptions`。这些字段与 `ai-sdk` 的 `ModelRequest` 含义相同，循环不改写、不猜测别名。消息上的 `ProviderOptions` 和 `ContentProvider` 内容随消息原样进入后续调用；模型响应里的原生字段留在 `ModelResponse.Raw`，不会被写回请求扩展。`Metadata` 会复制到每一步，其中 `run_id`、`request_id`、`step` 由循环写入并覆盖同名调用方值。流式超时只作用于 SDK 的 `Stream` / `ChatStream`，本模块仍只使用非流式 `Generate`。
 

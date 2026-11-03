@@ -2,10 +2,10 @@ package protocol
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
-	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/utils"
 )
 
 func (denied *ToolDeniedError) Error() string {
@@ -16,29 +16,46 @@ func (denied *ToolDeniedError) Error() string {
 	return message
 }
 
-// Clone copies mutable request data, preserving executors and callbacks.
-func (request Request) Clone() Request { return utils.Clone(request) }
+// Clone copies protocol data using SDK snapshot rules. JSON-shaped extensions
+// are isolated; application objects, executors and callbacks remain shared.
+func (request Request) Clone() Request {
+	snapshot := request.modelRequest(request.Messages).Clone()
+	request.Messages = snapshot.Messages
+	request.Temperature, request.MaxOutputTokens = snapshot.Temperature, snapshot.MaxOutputTokens
+	request.Reasoning, request.OutputFormat = snapshot.Reasoning, snapshot.OutputFormat
+	request.ProviderOptions, request.Metadata = snapshot.ProviderOptions, snapshot.Metadata
+	request.Tools = slices.Clone(request.Tools)
+	for index := range request.Tools {
+		request.Tools[index].Definition = snapshot.Tools[index]
+	}
+	return request
+}
+
+// modelRequest assembles borrowed fields; callers clone before exposing them.
+func (request Request) modelRequest(messages []aiprot.Message) aiprot.ModelRequest {
+	modelRequest := aiprot.ModelRequest{
+		Model: request.Model, Messages: messages,
+		Temperature: request.Temperature, MaxOutputTokens: request.MaxOutputTokens,
+		ToolChoice: request.ToolChoice, Reasoning: request.Reasoning,
+		OutputFormat: request.OutputFormat, ProviderOptions: request.ProviderOptions,
+		Metadata: request.Metadata,
+	}
+	for _, tool := range request.Tools {
+		modelRequest.Tools = append(modelRequest.Tools, tool.Definition)
+	}
+	return modelRequest
+}
 
 // ModelCall builds one provider request. Caller metadata is copied, then the
 // execution keys overwrite any caller values with the same names.
 func (request Request) ModelCall(messages []aiprot.Message, runID, requestID string, step int) aiprot.ModelRequest {
-	metadata := utils.Clone(request.Metadata)
-	if metadata == nil {
-		metadata = make(map[string]string, 3)
+	modelRequest := request.modelRequest(recentRounds(messages, request.Options.MaxHistoryRounds)).Clone()
+	if modelRequest.Metadata == nil {
+		modelRequest.Metadata = make(map[string]string, 3)
 	}
-	metadata[MetadataRunID] = runID
-	metadata[aiprot.RequestIDMetadataKey] = requestID
-	metadata[MetadataStep] = strconv.Itoa(step)
-	modelRequest := aiprot.ModelRequest{
-		Model: request.Model, Messages: utils.Clone(recentRounds(messages, request.Options.MaxHistoryRounds)),
-		Temperature: utils.Clone(request.Temperature), MaxOutputTokens: utils.Clone(request.MaxOutputTokens),
-		ToolChoice: request.ToolChoice, Reasoning: utils.Clone(request.Reasoning),
-		OutputFormat: utils.Clone(request.OutputFormat), ProviderOptions: utils.Clone(request.ProviderOptions),
-		Metadata: metadata,
-	}
-	for _, tool := range request.Tools {
-		modelRequest.Tools = append(modelRequest.Tools, utils.Clone(tool.Definition))
-	}
+	modelRequest.Metadata[MetadataRunID] = runID
+	modelRequest.Metadata[aiprot.RequestIDMetadataKey] = requestID
+	modelRequest.Metadata[MetadataStep] = strconv.Itoa(step)
 	return modelRequest
 }
 
@@ -77,4 +94,94 @@ func recentRounds(messages []aiprot.Message, limit int) []aiprot.Message {
 }
 
 // Clone copies mutable execution records independently of the original result.
-func (result Result) Clone() Result { return utils.Clone(result) }
+func (result Result) Clone() Result {
+	result.LastResponse = result.LastResponse.Clone()
+	result.Messages = slices.Clone(result.Messages)
+	for index := range result.Messages {
+		result.Messages[index] = result.Messages[index].Clone()
+	}
+	result.Steps = slices.Clone(result.Steps)
+	for index := range result.Steps {
+		result.Steps[index] = result.Steps[index].Clone()
+	}
+	result.ToolCalls = cloneToolRecords(result.ToolCalls)
+	return result
+}
+
+// Clone isolates the model response within a step.
+func (step StepResult) Clone() StepResult {
+	step.Response = step.Response.Clone()
+	return step
+}
+
+// Clone isolates arguments, tool results and the confirmation decision.
+func (record ToolCallRecord) Clone() ToolCallRecord {
+	record.Call = record.Call.Clone()
+	record.Result = record.Result.Clone()
+	record.Confirmation = cloneDecision(record.Confirmation)
+	return record
+}
+
+func cloneDecision(decision *ToolConfirmationDecision) *ToolConfirmationDecision {
+	if decision == nil {
+		return nil
+	}
+	snapshot := *decision
+	return &snapshot
+}
+
+func cloneToolRecords(records []ToolCallRecord) []ToolCallRecord {
+	records = slices.Clone(records)
+	for index := range records {
+		records[index] = records[index].Clone()
+	}
+	return records
+}
+
+// Clone returns an independent snapshot for the confirmation callback.
+func (info ToolConfirmationInfo) Clone() ToolConfirmationInfo {
+	info.Call = info.Call.Clone()
+	info.Definition = info.Definition.Clone()
+	return info
+}
+
+// Clone returns a run-start snapshot, preserving callback functions.
+func (info RunStartInfo) Clone() RunStartInfo {
+	info.Request = info.Request.Clone()
+	return info
+}
+
+// Clone returns a run-end snapshot, preserving error identity.
+func (info RunEndInfo) Clone() RunEndInfo {
+	info.Request = info.Request.Clone()
+	info.Result = info.Result.Clone()
+	return info
+}
+
+// Clone returns an independent step-start snapshot.
+func (info StepStartInfo) Clone() StepStartInfo {
+	info.Request = info.Request.Clone()
+	return info
+}
+
+// Clone returns a step-end snapshot, preserving error identity.
+func (info StepEndInfo) Clone() StepEndInfo {
+	info.Request = info.Request.Clone()
+	info.Result = info.Result.Clone()
+	info.ToolCalls = cloneToolRecords(info.ToolCalls)
+	return info
+}
+
+// Clone returns an independent tool-start snapshot.
+func (info ToolStartInfo) Clone() ToolStartInfo {
+	info.Call = info.Call.Clone()
+	return info
+}
+
+// Clone returns a tool-end snapshot, preserving error identity.
+func (info ToolEndInfo) Clone() ToolEndInfo {
+	info.Call = info.Call.Clone()
+	info.Result = info.Result.Clone()
+	info.Confirmation = cloneDecision(info.Confirmation)
+	return info
+}
