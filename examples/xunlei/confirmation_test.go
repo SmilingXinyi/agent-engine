@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +40,9 @@ func TestExecutionOptionsConfirmToolsThroughAgent(t *testing.T) {
 	}{
 		{name: "empty preserves unattended execution", wantExecuted: true},
 		{name: "off skips terminal", mode: "off", wantExecuted: true},
+		{name: "whitespace off skips terminal", mode: " off ", wantExecuted: true},
+		{name: "whitespace empty skips terminal", mode: "  ", wantExecuted: true},
+		{name: "trimmed stop", mode: " stop ", input: "n\n", wantConfirmed: true, wantStopped: true},
 		{name: "approve y", mode: "continue", input: "y\n", wantConfirmed: true, wantExecuted: true},
 		{name: "approve yes with whitespace", mode: "stop", input: " YES \r\n", wantConfirmed: true, wantExecuted: true},
 		{name: "deny and continue", mode: "continue", input: "n\n", wantConfirmed: true},
@@ -48,7 +53,6 @@ func TestExecutionOptionsConfirmToolsThroughAgent(t *testing.T) {
 		{name: "unterminated answer never approves", mode: "stop", input: "y", wantStopped: true, wantEOF: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			t.Setenv("AGENT_TOOL_CONFIRMATION", scenario.mode)
 			var output bytes.Buffer
 			input := io.NopCloser(strings.NewReader(scenario.input))
 			defer input.Close()
@@ -68,13 +72,19 @@ func TestExecutionOptionsConfirmToolsThroughAgent(t *testing.T) {
 				}
 				return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "done")}, nil
 			}}
+			runOptions, err := executionOptions(scenario.mode, input, &output, 3)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Changes to process environment must not override already resolved options.
+			t.Setenv("AGENT_TOOL_CONFIRMATION", "off")
 			request := agentprot.Request{
 				Model: "test-model", UserPrompt: "click",
 				Tools: []loopprot.Tool{{Definition: aiprot.ToolDefinition{Name: call.Name}, Execute: func(context.Context, json.RawMessage) (aiprot.ToolResult, error) {
 					executions++
 					return aiprot.TextToolResult("clicked"), nil
 				}}},
-				Options: executionOptions(input, &output, 3),
+				Options: runOptions,
 			}
 			result, err := agent.New(ai.NewClient(provider, aiprot.Hooks{})).Execute(context.Background(), request)
 			wantExecutions := 0
@@ -108,7 +118,8 @@ func TestExecutionOptionsConfirmToolsThroughAgent(t *testing.T) {
 			if decision != nil && (decision.Approved != scenario.wantExecuted || (!decision.Approved && decision.Reason == "")) {
 				t.Fatalf("decision=%+v", decision)
 			}
-			prompted := scenario.mode != "" && scenario.mode != "off"
+			mode := strings.TrimSpace(scenario.mode)
+			prompted := mode != "" && mode != "off"
 			if strings.Contains(output.String(), "[tool confirmation]") != prompted || strings.Contains(output.String(), "[tool decision]") != scenario.wantConfirmed {
 				t.Fatalf("log=%s", &output)
 			}
@@ -192,5 +203,33 @@ func TestTerminalConfirmationDoesNotReadAfterCancellationOrPromptFailure(t *test
 	decision, err = terminalConfirmation(io.NopCloser(strings.NewReader("y\n")), brokenOutput)(context.Background(), loopprot.ToolConfirmationInfo{})
 	if !errors.Is(err, failure) || decision.Approved {
 		t.Fatalf("decision=%+v error=%v", decision, err)
+	}
+}
+
+func TestExecutionOptionsRejectInvalidModeBeforeExecution(t *testing.T) {
+	var output bytes.Buffer
+	options, err := executionOptions("invalid", io.NopCloser(strings.NewReader("y\n")), &output, 3)
+	if err == nil || !strings.Contains(err.Error(), "invalid AGENT_TOOL_CONFIRMATION") || options.ConfirmTool != nil || output.Len() != 0 {
+		t.Fatalf("options=%+v error=%v output=%s", options, err, &output)
+	}
+}
+
+func TestRunRejectsInvalidConfirmationBeforeConnecting(t *testing.T) {
+	directory := t.TempDir()
+	urlPath := filepath.Join(directory, "download-url.txt")
+	if err := os.WriteFile(urlPath, []byte("https://example.com/file.zip"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_TOOL_CONFIRMATION", "invalid")
+	// Missing model and MCP configuration must never be used for this invalid mode.
+	t.Setenv("AGENT_LLM_MODEL", "")
+	t.Setenv("AGENT_MODEL", "")
+	err := run(context.Background(), options{
+		urlPath: urlPath, envPath: filepath.Join(directory, ".env"),
+		configPath: filepath.Join(directory, "missing-mcp.json"),
+		maxSteps:   3, historyMessages: 10, timeout: time.Second,
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid AGENT_TOOL_CONFIRMATION") {
+		t.Fatalf("error=%v", err)
 	}
 }

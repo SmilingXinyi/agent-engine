@@ -61,7 +61,7 @@ AGENT_TOOL_CONFIRMATION=off
 
 ## 执行确认、参数与日志
 
-`AGENT_TOOL_CONFIRMATION=off`、未设置或留空时不询问。`continue` / `stop` 启用终端确认，显示工具名和参数：输入 `y` / `yes` 并回车批准，其他输入或直接回车拒绝。`continue` 拒绝后反馈模型继续，`stop` 拒绝即终止；EOF、读取错误、Ctrl+C 或总超时均终止等待。
+入口在加载 `.env` 后一次性解析 `AGENT_TOOL_CONFIRMATION`，将确认回调和拒绝策略传给 Agent；Agent 本身不读取环境变量。非法值在连接 MCP 或调用模型前报错。`off`、未设置或留空时不询问。`continue` / `stop` 启用终端确认，显示工具名和参数：输入 `y` / `yes` 并回车批准，其他输入或直接回车拒绝。`continue` 拒绝后反馈模型继续，`stop` 拒绝即终止；EOF、读取错误、Ctrl+C 或总超时均终止等待。
 
 ```bash
 AGENT_TOOL_CONFIRMATION=off go run ./examples/xunlei/{main,desktop,logging,confirmation}.go \

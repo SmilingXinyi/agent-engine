@@ -74,17 +74,9 @@ options.ToolDenialPolicy = loopprot.ToolDenialStop
 // 将 options 赋给 Request.Options。
 ```
 
-Agent 每次 `Execute` 都读取进程环境变量 `AGENT_TOOL_CONFIRMATION`，可通过 `.env` 或进程环境选择开关和拒绝策略：
+Agent 和 Loop 不读取 `AGENT_TOOL_CONFIRMATION`，也不加载 `.env` 或创建终端交互。应用入口负责读取环境变量／配置文件，解析并校验后将最终的 `ConfirmTool` 和 `ToolDenialPolicy` 传入 `Request.Options`。执行时只使用这些显式配置，进程环境不会覆盖回调或拒绝策略。
 
-```sh
-AGENT_TOOL_CONFIRMATION=off       # 关闭确认，直接执行工具
-AGENT_TOOL_CONFIRMATION=continue  # 启用确认，拒绝后反馈模型并继续（生产）
-AGENT_TOOL_CONFIRMATION=stop      # 启用确认，拒绝后终止运行（调试）
-```
-
-该变量未设置或为空时沿用 `Request.Options`：未配置回调就直接执行，策略零值为 `ToolDenialContinue`。显式设置 `off` 会忽略请求中的确认回调；`continue` / `stop` 会覆盖请求中的拒绝策略，但仍需调用方提供 `ConfirmTool` 回调。启用确认却未提供回调，或变量值非法时，在调用模型及生命周期 Hooks 前返回 `StopError` 和配置错误。不会根据环境自动创建终端交互。
-
-Agent 读取进程环境，不自行加载 `.env` 文件；现有示例入口会在执行前加载 `.env`，直接使用 Agent 的程序需自行加载或使用 `export AGENT_TOOL_CONFIRMATION=stop`。直接调用 `Loop.Run` 不读取此变量。
+未提供 `ConfirmTool` 时直接执行；提供时调用该回调，策略零值为 `ToolDenialContinue`。需要保留环境变量控制的应用应在入口自行实现映射。现有[迅雷示例](../examples/xunlei/README_cn.md#执行确认参数与日志)在加载 `.env` 后解析 `off` / `continue` / `stop`，并在连接 MCP 前拒绝非法值；其他示例未接入该环境变量。
 
 拒绝不调用执行器，原因由决定的 `Reason` 提供；停止策略返回 `StopError` 和可通过 `errors.As` 识别的 `*loopprot.ToolDeniedError`。确认系统报错、panic 或 context 取消均终止运行。执行记录与 ToolEnd Hook 包含 `Confirmation` 决定快照，完整接入示例与边界行为见 [ai-tool-loop 工具执行确认](../ai-tool-loop/README_cn.md#工具执行确认)。
 

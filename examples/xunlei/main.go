@@ -84,6 +84,11 @@ func run(ctx context.Context, settings options) (err error) {
 	if err := loadEnv(settings.envPath); err != nil {
 		return err
 	}
+	// Resolve application configuration once, before connecting MCP servers.
+	runOptions, err := executionOptions(os.Getenv("AGENT_TOOL_CONFIRMATION"), os.Stdin, output, settings.maxSteps)
+	if err != nil {
+		return err
+	}
 	model := firstEnv("AGENT_LLM_MODEL", "AGENT_MODEL")
 	baseURL := os.Getenv("AGENT_LLM_BASE_URL")
 	if model == "" || baseURL == "" {
@@ -120,7 +125,7 @@ func run(ctx context.Context, settings options) (err error) {
 		Model: model, SystemPrompt: systemPrompt,
 		UserPrompt: fmt.Sprintf("目标显示器索引：%d\n预期文件名：%s\n下载 URL：\n%s", settings.display, strings.Join(filenames, "、"), downloadURL),
 		Tools:      runtime.Tools,
-		Options:    executionOptions(os.Stdin, output, settings.maxSteps),
+		Options:    runOptions,
 	})
 	if err != nil {
 		return err

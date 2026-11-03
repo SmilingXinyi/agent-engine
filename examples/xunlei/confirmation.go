@@ -5,22 +5,25 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 )
 
-func executionOptions(input io.ReadCloser, output io.Writer, maxSteps int) loopprot.RunOptions {
+func executionOptions(mode string, input io.ReadCloser, output io.Writer, maxSteps int) (loopprot.RunOptions, error) {
 	// The vision adapter applies the final message limit after adding images.
 	// Keep the original task available until that limit is applied.
 	options := loopprot.RunOptions{MaxSteps: maxSteps, MaxHistoryRounds: maxSteps, Hooks: executionHooks(output)}
-	// Agent interprets the mode; only supply the terminal UI when explicitly
-	// configured so an empty environment preserves unattended execution.
-	if strings.TrimSpace(os.Getenv("AGENT_TOOL_CONFIRMATION")) != "" {
+	switch mode = strings.TrimSpace(mode); mode {
+	case "", "off":
+		// Preserve unattended execution unless confirmation was explicitly enabled.
+	case "continue", "stop":
 		options.ConfirmTool = terminalConfirmation(input, output)
+		options.ToolDenialPolicy = loopprot.ToolDenialPolicy(mode)
+	default:
+		return loopprot.RunOptions{}, fmt.Errorf("invalid AGENT_TOOL_CONFIRMATION %q: expected off, continue or stop", mode)
 	}
-	return options
+	return options, nil
 }
 
 func terminalConfirmation(input io.ReadCloser, output io.Writer) func(context.Context, loopprot.ToolConfirmationInfo) (loopprot.ToolConfirmationDecision, error) {

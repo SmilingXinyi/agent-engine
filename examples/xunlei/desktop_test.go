@@ -149,7 +149,6 @@ func TestVisionProviderWaitsUntilEntireToolBatchBeforeAttachingImage(t *testing.
 }
 
 func TestVisionLoopKeepsOriginalTaskAndTenMessageLimitBeyondTenRounds(t *testing.T) {
-	t.Setenv("AGENT_TOOL_CONFIRMATION", "off")
 	models := 0
 	provider := visionProvider{maxMessages: 10, output: io.Discard, Provider: confirmationProvider{generate: func(_ context.Context, request aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		models++
@@ -167,7 +166,11 @@ func TestVisionLoopKeepsOriginalTaskAndTenMessageLimitBeyondTenRounds(t *testing
 		}
 		return aiprot.ModelResponse{Message: screenshotExchange(fmt.Sprint(models), testScreenshot("unused"))[0]}, nil
 	}}}
-	request := agentprot.Request{Model: "vision", SystemPrompt: systemPrompt, UserPrompt: "original task and URL", Options: executionOptions(io.NopCloser(strings.NewReader("")), io.Discard, 16), Tools: []loopprot.Tool{{Definition: aiprot.ToolDefinition{Name: "desktop-agent-remote_capture_screen"}, Execute: func(_ context.Context, arguments json.RawMessage) (aiprot.ToolResult, error) {
+	runOptions, err := executionOptions("off", io.NopCloser(strings.NewReader("")), io.Discard, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := agentprot.Request{Model: "vision", SystemPrompt: systemPrompt, UserPrompt: "original task and URL", Options: runOptions, Tools: []loopprot.Tool{{Definition: aiprot.ToolDefinition{Name: "desktop-agent-remote_capture_screen"}, Execute: func(_ context.Context, arguments json.RawMessage) (aiprot.ToolResult, error) {
 		if string(arguments) != `{"mode":"display","display_index":0}` {
 			t.Fatalf("native screenshot arguments were changed: %s", arguments)
 		}
