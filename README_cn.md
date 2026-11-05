@@ -10,6 +10,7 @@
 - `agent`: Prompt 与历史上下文组织，委托 AI Tool Loop 执行，参见[使用说明](./agent/README_cn.md)。
 - `agent-skill`: 本地 SKILL.md 解析、技能目录和按需读取工具，参见[使用说明](./agent-skill/README_cn.md)。
 - `mcp-runtime`: MCP stdio / Streamable HTTP / legacy SSE 连接、工具发现及执行适配，参见[使用说明](./mcp-runtime/README_cn.md)。
+- `workspace`: 单机 CLI、项目独立的 MCP / skills 和 NDJSON 持久化上下文，参见[使用说明](./workspace/README_cn.md)。
 
 ## 开发规范
 
@@ -29,6 +30,20 @@
 go work sync
 ```
 
+### 本机项目 Workspace
+
+在 macOS 或 Linux 上，为已有项目目录初始化配置并开始持续对话：
+
+```bash
+go run ./workspace/cmd/agent-engine init /path/to/project
+export AGENT_LLM_MODEL='your-model'
+export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
+export AGENT_LLM_API_KEY='your-key'
+go run ./workspace/cmd/agent-engine chat /path/to/project
+```
+
+每个项目独立保存配置和 `.agents/state/history.ndjson`，重新打开继续同一份上下文。写入、Shell 和 MCP 调用默认逐次确认。
+
 ### 远程桌面 Agent 示例
 
 ```bash
@@ -42,7 +57,7 @@ go run ./examples/remote-desktop-agent/main.go ./examples/remote-desktop-agent/o
 执行测试：
 
 ```bash
-go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/...
+go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/...
 ```
 
 ## 历史实现的取舍
@@ -61,7 +76,8 @@ go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools
 | Engine 历史工具调用/结果校验 | 重写到 Agent 的上下文校验中 | 不将孤立、错配、未完成的工具批次传给模型 |
 | Engine 工厂、重复消息类型、生命周期桥接、DebugSink | 由 SDK Client / Hooks 和 loop 记录承担 | 一种协议、一套循环、一套可观测性，不建第二个抽象层 |
 | Engine 按消息数裁剪、隐式 system 覆盖、工具环境注入 | ai-tool-loop 按完整轮次裁剪模型输入，system 始终保留；其他能力暂不引入 | 保持工具批次完整及完整执行记录；消息与参数保持显式输入 |
-| Engine 流式、外部工具续接、参数改写、会话持久化 | 保持当前范围，暂缓 | 这些能力需要独立契约与真实调用场景 |
+| Engine 会话持久化 | 由 workspace 编排模块提供项目独立的 NDJSON 历史及中断恢复 | Agent 和 loop 保持无状态 |
+| Engine 流式、外部工具续接、参数改写 | 保持当前范围，暂缓 | 这些能力需要独立契约与真实调用场景 |
 
 MCP 图片等非文本结果目前仍序列化为 JSON 文本。这与旧实现相同，不是视觉输入适配；截图体积和上下文预算应在明确模型格式后单独处理。不能仅按消息数量切片来解决 token 成本。
 

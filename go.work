@@ -7,4 +7,5 @@ use (
 	./ai-tool-loop
 	./ai-tools
 	./mcp-runtime
+	./workspace
 )

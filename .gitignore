@@ -37,6 +37,7 @@ main.exe
 /examples/record.md
 /examples/xunlei/download-url.txt
 /:memory:.ses
+**/.agents/state/
 
 # Locally downloaded MCP and OCR executables
 /examples/mcp-darwin-arm64*
