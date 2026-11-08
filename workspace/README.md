@@ -118,3 +118,5 @@ bash workspace/scripts/package-release.sh darwin arm64 v0.1.0 /tmp/workspace-rel
 ~~~
 
 CGO is disabled; project configurations, credentials and conversation histories are never packaged. Only the release job has `contents: write`. Failed runs can be rerun; same-name assets are replaced. Version suffixes such as `workspace/v0.2.0-rc.1` produce prereleases.
+
+To publish an existing tag manually, use Run workflow in Actions or `gh workflow run workspace-release.yml --ref main -f tag=workspace/v0.1.0`. Manual runs also check out and test the specified tag, without moving it or packaging main's application code.

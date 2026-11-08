@@ -187,3 +187,5 @@ bash workspace/scripts/package-release.sh darwin arm64 v0.1.0 /tmp/workspace-rel
 ~~~
 
 构建关闭 CGO，不打包本机 `.agents` 配置、凭据或对话历史。工作流仅在发布 job 获得 `contents: write` 权限；失败后可在 Actions 页面重跑，已有同名附件会被替换。带版本后缀的 tag（例如 `workspace/v0.2.0-rc.1`）会发布为 prerelease。
+
+也可在 Actions 页面使用 Run workflow，填写已有的 workspace tag；或运行 `gh workflow run workspace-release.yml --ref main -f tag=workspace/v0.1.0`。手动发布仍检出指定 tag 的源码进行测试与打包，不使用 main 的应用代码，不修改 tag。
