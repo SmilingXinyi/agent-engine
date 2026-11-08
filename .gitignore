@@ -39,6 +39,9 @@ main.exe
 /:memory:.ses
 **/.agents/state/
 
+# Packaged release assets
+/dist/
+
 # Locally downloaded MCP and OCR executables
 /examples/mcp-darwin-arm64*
 /examples/tiny-image-mcp-darwin-arm64

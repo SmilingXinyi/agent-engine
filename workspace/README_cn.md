@@ -2,7 +2,33 @@
 
 单机单用户的项目执行环境。每个项目目录拥有独立的模型配置、MCP、skills 和一份可继续的对话上下文；只支持 macOS、Linux。CLI 组合现有模块，不引入第二套 Agent 或工具循环。
 
-## 使用
+## 下载 CLI
+
+从 [GitHub Releases](https://github.com/SmilingXinyi/agent-engine/releases) 下载 `workspace/v0.1.0` 对应平台的压缩包：
+
+| 平台 | 架构 | 文件后缀 |
+| --- | --- | --- |
+| macOS | Apple Silicon | `darwin_arm64.tar.gz` |
+| macOS | Intel | `darwin_amd64.tar.gz` |
+| Linux | x86-64 | `linux_amd64.tar.gz` |
+| Linux | ARM64 | `linux_arm64.tar.gz` |
+
+文件名格式为 `agent-engine-workspace_v0.1.0_<系统>_<架构>.tar.gz`。每包包含 `agent-engine`、`README.md` 和 `README_cn.md`，无需安装 Go。Release 同时提供 `SHA256SUMS` 校验文件。
+
+以 Apple Silicon 为例，下载并解压后执行：
+
+~~~bash
+tar -xzf agent-engine-workspace_v0.1.0_darwin_arm64.tar.gz
+./agent-engine init /path/to/project
+export AGENT_LLM_MODEL='your-model'
+export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
+export AGENT_LLM_API_KEY='your-key'
+./agent-engine chat /path/to/project
+~~~
+
+产物是独立的 Workspace Agent CLI，支持本页描述的配置、工具、上下文持久化和恢复能力；模型服务、凭据、外部 MCP 服务器及其运行环境仍由用户配置。
+
+## 从源码运行
 
 从仓库根目录运行，目标项目目录须已存在：
 
@@ -144,3 +170,20 @@ go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools
 ~~~
 
 测试不依赖真实模型或外部 MCP 服务：使用假 Provider、临时目录、受控 stdio MCP 子进程及真实进程退出验证恢复、锁和资源释放。Shell 相关测试缺少 `sh` 时明确跳过；符号链接不可用时跳过对应边界测试。
+
+## 发布流程
+
+推送 `workspace/v*` tag 自动触发 `.github/workflows/workspace-release.yml`。工作流先在 Linux 和 macOS 上运行完整工作区 race 测试及 CLI 冒烟验证，再交叉构建四个平台包。全部成功后创建 Release 草稿、上传压缩包及校验文件，最后公开 Release；其他模块的 tag 不触发此流程。
+
+~~~bash
+git tag -a workspace/v0.1.0 -m 'Release workspace CLI v0.1.0'
+git push origin refs/tags/workspace/v0.1.0
+~~~
+
+本地可复用同一打包脚本（在仓库根目录执行）：
+
+~~~bash
+bash workspace/scripts/package-release.sh darwin arm64 v0.1.0 /tmp/workspace-release
+~~~
+
+构建关闭 CGO，不打包本机 `.agents` 配置、凭据或对话历史。工作流仅在发布 job 获得 `contents: write` 权限；失败后可在 Actions 页面重跑，已有同名附件会被替换。带版本后缀的 tag（例如 `workspace/v0.2.0-rc.1`）会发布为 prerelease。

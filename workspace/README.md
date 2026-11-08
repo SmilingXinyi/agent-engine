@@ -2,7 +2,24 @@
 
 A local, single-user CLI for macOS and Linux. Each project owns independent model settings, MCP servers, skills, and one durable conversation. This module composes the existing Agent and tool loop.
 
-## Quick start
+## Download the CLI
+
+Download a `workspace/v0.1.0` archive from [GitHub Releases](https://github.com/SmilingXinyi/agent-engine/releases). Supported targets are `darwin_arm64` (Apple Silicon), `darwin_amd64` (Intel macOS), `linux_amd64` (x86-64) and `linux_arm64`. Archives are named `agent-engine-workspace_v0.1.0_<os>_<arch>.tar.gz` and contain `agent-engine` plus English and Chinese READMEs. `SHA256SUMS` is provided with the release.
+
+For example, on Apple Silicon:
+
+~~~bash
+tar -xzf agent-engine-workspace_v0.1.0_darwin_arm64.tar.gz
+./agent-engine init /path/to/project
+export AGENT_LLM_MODEL='your-model'
+export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
+export AGENT_LLM_API_KEY='your-key'
+./agent-engine chat /path/to/project
+~~~
+
+No Go installation is required. The executable is the standalone Workspace Agent CLI with project configuration, tools and persistent conversation support; configure your own model service, credentials, and external MCP server executables/runtimes.
+
+## Run from source
 
 Run from the repository root; the project directory must already exist:
 
@@ -87,3 +104,17 @@ go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools
 ~~~
 
 Tests use fake Providers, temporary directories, controlled stdio MCP processes and process crashes, with no live model or external MCP server. Shell tests explicitly skip when `sh` is missing; symlink tests skip if unsupported. See [中文说明](./README_cn.md) for detailed configuration and examples.
+
+## Publishing
+
+Pushing a `workspace/v*` tag triggers `.github/workflows/workspace-release.yml`. The workflow runs all workspace race tests and native CLI smoke checks on Linux and macOS, cross-compiles four archives, then uploads them and `SHA256SUMS` to a draft GitHub Release before publishing it. Other module tags do not trigger this workflow.
+
+~~~bash
+git tag -a workspace/v0.1.0 -m 'Release workspace CLI v0.1.0'
+git push origin refs/tags/workspace/v0.1.0
+
+# Reuse the same packaging step locally from the repository root:
+bash workspace/scripts/package-release.sh darwin arm64 v0.1.0 /tmp/workspace-release
+~~~
+
+CGO is disabled; project configurations, credentials and conversation histories are never packaged. Only the release job has `contents: write`. Failed runs can be rerun; same-name assets are replaced. Version suffixes such as `workspace/v0.2.0-rc.1` produce prereleases.

@@ -1,0 +1,129 @@
+name: Release Workspace CLI
+
+on:
+  push:
+    tags:
+      - 'workspace/v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workspace-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: '**/go.sum'
+      - name: Test the Go workspace with the race detector
+        run: go test -race ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/...
+      - name: Smoke test the native CLI without model calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -o "$RUNNER_TEMP/agent-engine" ./workspace/cmd/agent-engine
+          mkdir -p "$RUNNER_TEMP/smoke-project"
+          "$RUNNER_TEMP/agent-engine" init "$RUNNER_TEMP/smoke-project"
+          printf '/help\n/history\n/exit\n' |
+            AGENT_MODEL=smoke-test AGENT_LLM_BASE_URL=http://127.0.0.1:1/v1 \
+            "$RUNNER_TEMP/agent-engine" chat "$RUNNER_TEMP/smoke-project"
+
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [darwin, linux]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: '**/go.sum'
+      - name: Build and package the standalone workspace CLI
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          TARGET_OS: ${{ matrix.goos }}
+          TARGET_ARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          bash workspace/scripts/package-release.sh "$TARGET_OS" "$TARGET_ARCH" "${RELEASE_TAG#workspace/}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace-release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: workspace-release-*
+          merge-multiple: true
+          path: dist
+      - name: Create checksums and publish all release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          archives=(dist/*.tar.gz)
+          if [[ ${#archives[@]} -ne 4 ]]; then
+            echo "Expected all four workspace CLI archives before publishing." >&2
+            exit 1
+          fi
+          (cd dist && sha256sum ./*.tar.gz > SHA256SUMS)
+          cat > "$RUNNER_TEMP/workspace-release-notes.md" <<'NOTES'
+          独立的单机 Agent Workspace CLI，支持 macOS / Linux 的 amd64 和 arm64 架构。
+
+          下载对应平台的压缩包并解压，无需 Go 环境；压缩包中包含 agent-engine 和中英文使用说明。SHA256SUMS 可用于校验下载文件。
+
+          初始化项目并开始对话：
+
+          ```sh
+          ./agent-engine init /path/to/project
+          export AGENT_LLM_MODEL='your-model'
+          export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
+          export AGENT_LLM_API_KEY='your-key'
+          ./agent-engine chat /path/to/project
+          ```
+
+          每个项目独立管理 MCP、skills 和 NDJSON 持久化上下文。写入、Shell 和 MCP 调用默认需要确认。外部 MCP 服务器及其运行环境需自行配置；CLI 不内置模型或外部 MCP 可执行文件。
+          NOTES
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "Agent Workspace ${RELEASE_TAG#workspace/}" \
+              --notes-file "$RUNNER_TEMP/workspace-release-notes.md"
+          fi
+          gh release upload "$RELEASE_TAG" "${archives[@]}" dist/SHA256SUMS --clobber
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          fi
