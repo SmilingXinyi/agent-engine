@@ -57,7 +57,26 @@ go build -o /tmp/agent-engine ./workspace/cmd/agent-engine
 | `/reset` | 确认后清空当前上下文，追加重置事件，保留原始审计记录 |
 | `/exit` | 退出并释放 MCP 和 workspace 锁 |
 
-执行时 Ctrl+C 取消当前运行并返回提示符，再次 Ctrl+C 请求退出；空闲时 Ctrl+C 或 EOF 退出。取消模型、Shell 或 MCP 调用依赖后端响应 context。工具确认的 EOF 或读取失败不会批准执行。
+执行时 Ctrl+C 取消当前运行并返回提示符，再次 Ctrl+C 请求退出；非交互输入时，空闲 Ctrl+C 或 EOF 退出。取消模型、Shell 或 MCP 调用依赖后端响应 context。工具确认的 EOF 或读取失败不会批准执行。
+
+## 交互输入
+
+当前源码版本在 stdin、stdout 均为终端且 `TERM` 不是 `dumb` 时自动启用 [Bubbline](https://github.com/knz/bubbline)，提供局部多行编辑，不占用全屏。已发布的 `workspace/v0.1.0` 仍使用旧版单行输入，需要从源码重新构建才能体验这些功能。
+
+| 按键 | 行为 |
+| --- | --- |
+| Enter | 提交整段输入 |
+| Ctrl+J / Ctrl+O / Alt+Enter | 插入换行 |
+| 上下键 | 跨行移动；到达输入边界后召回历史 |
+| Ctrl+R | 搜索输入历史；Enter 取回结果，再按 Enter 提交 |
+| Ctrl+C | 清空非空草稿；输入为空时退出 |
+| Ctrl+D | 当前为空行时结束输入，其他位置按编辑器规则删除字符 |
+
+支持中文和多行粘贴，括号粘贴模式下的换行不会自动提交。Shift+Enter 是否能产生独立按键取决于终端；这版不启用扩展键盘协议，可使用上述换行键，或让终端将 Shift+Enter 映射为 Ctrl+J（LF）。
+
+输入历史只从当前 workspace 的 NDJSON 中提取用户消息，不保存第二份历史文件；重开可召回，`/reset` 后清空可召回内容。工具确认和重置确认不读取对话历史、不保存确认答案；工具确认中的 Ctrl+C 直接中断当前执行。
+
+管道、文件重定向或 `TERM=dumb` 自动沿用逐行输入，不输出编辑器控制序列。无论哪种模式都只有一个输入所有者，编辑结束或取消后恢复终端状态，运行中的工具和模型不会与编辑器同时读取 stdin。
 
 ## 目录与配置
 

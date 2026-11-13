@@ -37,7 +37,26 @@ go build -o /tmp/agent-engine ./workspace/cmd/agent-engine
 
 The default directory is the current directory; no parent search occurs. Initialization preserves existing files and runs no model, tools, or MCP servers. Add `.agents/state/` to your project's version-control ignore rules.
 
-Commands: `/help`, `/history` (current messages as JSON), `/reset` (confirmed context reset; audit events retained), `/exit`. Reopening restores the context but waits for a new prompt. Ctrl+C cancels an active execution; another interrupt requests exit. An idle interrupt or EOF exits and releases resources. Responses are complete messages, not streaming output.
+Commands: `/help`, `/history` (current messages as JSON), `/reset` (confirmed context reset; audit events retained), `/exit`. Reopening restores the context but waits for a new prompt. Ctrl+C cancels an active execution; another interrupt requests exit. In plain input mode, an idle interrupt or EOF exits and releases resources. Responses are complete messages, not streaming output.
+
+## Interactive editing
+
+Current source builds automatically use [Bubbline](https://github.com/knz/bubbline) when both stdin and stdout are terminals and `TERM` is not `dumb`. Editing stays inline rather than taking over the screen. Published `workspace/v0.1.0` binaries retain the original single-line input; rebuild from source to try this integration.
+
+| Keys | Behavior |
+| --- | --- |
+| Enter | Submit the whole input |
+| Ctrl+J / Ctrl+O / Alt+Enter | Insert a newline |
+| Up / Down | Move across lines; recall history at input boundaries |
+| Ctrl+R | Search input history; Enter recalls the match, another Enter submits |
+| Ctrl+C | Clear a draft; exit when input is empty |
+| Ctrl+D | Finish input on an empty line; otherwise use the editor's deletion behavior |
+
+Unicode and bracketed multiline paste are supported; pasted newlines do not submit the prompt. Shift+Enter depends on terminal key encoding. This integration does not enable an extended keyboard protocol; use a supported newline key or configure the terminal to send Ctrl+J (LF) for Shift+Enter.
+
+Recall history comes only from user messages in the current workspace's NDJSON, with no extra history file. It survives reopening and clears after `/reset`. Approval/reset prompts have independent editors without conversation history, and their answers are not added to recall history. Ctrl+C during tool approval interrupts that execution immediately.
+
+Pipes, redirected files or `TERM=dumb` retain plain line-by-line input with no editor escape sequences. A single owner reads stdin in each phase; editing or cancellation restores terminal state before returning to execution.
 
 ## Project configuration
 

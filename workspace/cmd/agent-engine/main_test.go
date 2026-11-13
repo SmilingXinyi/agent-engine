@@ -102,12 +102,11 @@ func TestChatConfirmationHistoryAndReset(t *testing.T) {
 func TestConfirmationEOFAndCancelledInputAreNotApproved(t *testing.T) {
 	for _, eof := range []bool{true, false} {
 		reader, writer := io.Pipe()
-		done := make(chan struct{})
-		lines := readLines(reader, done)
+		prompts := newChatInput(reader, io.Discard)
 		ctx, cancel := context.WithCancel(t.Context())
 		finished := make(chan error, 1)
 		go func() {
-			decision, err := terminalConfirmation(lines, io.Discard)(ctx, loopprot.ToolConfirmationInfo{})
+			decision, err := terminalConfirmation(prompts, io.Discard)(ctx, loopprot.ToolConfirmationInfo{})
 			if decision.Approved {
 				finished <- errors.New("unexpected approval")
 				return
@@ -130,7 +129,7 @@ func TestConfirmationEOFAndCancelledInputAreNotApproved(t *testing.T) {
 		if !eof {
 			go func() { _, _ = io.WriteString(writer, "next prompt\n") }()
 			select {
-			case line := <-lines:
+			case line := <-prompts.lines:
 				if line.text != "next prompt" {
 					t.Fatal(line)
 				}
@@ -139,8 +138,7 @@ func TestConfirmationEOFAndCancelledInputAreNotApproved(t *testing.T) {
 			}
 		}
 		cancel()
-		close(done)
-		reader.Close()
+		prompts.Close()
 		writer.Close()
 	}
 }
