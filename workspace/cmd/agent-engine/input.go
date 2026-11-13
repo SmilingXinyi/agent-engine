@@ -134,13 +134,27 @@ func (input *chatInput) Read(ctx context.Context, prompt string, multiline bool)
 	program := tea.NewProgram(model,
 		tea.WithInput(input.reader),
 		tea.WithOutput(terminalWriter{File: input.terminalOutput, writer: input.output}),
-		tea.WithContext(ctx),
 		tea.WithoutSignalHandler(),
 	)
-	if _, err := program.Run(); err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
+	// Context cancellation must quit gracefully: Bubble Tea's forced shutdown
+	// closes its cancel reader without joining the input loop on Linux.
+	finished := make(chan struct{})
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		select {
+		case <-ctx.Done():
+			program.Quit()
+		case <-finished:
 		}
+	}()
+	_, err := program.Run()
+	close(finished)
+	<-watcherDone
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if err != nil {
 		return "", err
 	}
 	return editor.Value(), editor.Err

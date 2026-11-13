@@ -1,6 +1,7 @@
 package mcpruntime
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -30,7 +31,11 @@ func TestStdioFrameLimit(t *testing.T) {
 		{name: "configured-1-MiB", limit: 1024 * 1024, fails: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			runtime, err := Start(testContext(t), protocol.Config{Servers: map[string]protocol.ServerConfig{
+			// Large JSON frames under the race detector can take more than the
+			// usual 10 seconds on hosted macOS runners.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			runtime, err := Start(ctx, protocol.Config{Servers: map[string]protocol.ServerConfig{
 				"local": {
 					Command: executable, Args: []string{"-test.run=^$"}, MaxLineLength: scenario.limit,
 					Env: map[string]string{helperServerEnv: "1", "MCP_TEST_RESPONSE_BYTES": strconv.Itoa(responseBytes)},
@@ -40,7 +45,7 @@ func TestStdioFrameLimit(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer runtime.Close()
-			result, err := runtime.Tools[0].Execute(testContext(t), json.RawMessage(`{}`))
+			result, err := runtime.Tools[0].Execute(ctx, json.RawMessage(`{}`))
 			if scenario.fails {
 				if err == nil || !strings.Contains(err.Error(), "exceeded the configured maximum line length") {
 					t.Fatalf("expected frame limit error, got %v", err)
@@ -54,7 +59,7 @@ func TestStdioFrameLimit(t *testing.T) {
 				t.Fatalf("large response was truncated or corrupted; bytes=%d", len(text))
 			}
 			// The same session must remain usable after a large frame.
-			if _, err := runtime.Tools[0].Execute(testContext(t), json.RawMessage(`{}`)); err != nil {
+			if _, err := runtime.Tools[0].Execute(ctx, json.RawMessage(`{}`)); err != nil {
 				t.Fatalf("session failed after receiving a large frame: %v", err)
 			}
 			if err := runtime.Close(); err != nil {
