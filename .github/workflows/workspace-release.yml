@@ -29,7 +29,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Use Intel macOS runners to avoid ARM hosted-runner capacity delays.
+        os: [ubuntu-latest, macos-15-intel]
     steps:
       - name: Validate the workspace release tag
         shell: bash
