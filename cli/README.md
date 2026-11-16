@@ -148,4 +148,4 @@ To publish an existing tag manually, use Run workflow in Actions or `gh workflow
 
 Call `cli.Run(ctx, args, cliprot.Options{Input: input, Output: output, Signals: signals})`, importing `cli/protocol` as `cliprot`. Input and Output are required; Signals is optional and caller-registered. Run returns errors without exiting the process. Chat closes Input and its workspace when it returns; init and argument validation leave Input open. Output always remains caller-owned.
 
-The source entry moved from `workspace/cmd/agent-engine` to `cli/cmd/agent-engine`. New releases use `cli/v*` tags and `agent-engine-cli_*` archives. Earlier `workspace/v*` releases are historical builds.
+The source entry moved from `workspace/cmd/agent-engine` to `cli/cmd/agent-engine`. New releases use `cli/v*` tags and `agent-engine-cli_*` archives. Legacy `workspace/v*`, `agent/v*` and `ai-tool-loop/v*` tags and Releases have been removed.

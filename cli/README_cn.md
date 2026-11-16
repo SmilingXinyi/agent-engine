@@ -217,4 +217,4 @@ bash cli/scripts/package-release.sh darwin arm64 v0.1.0 /tmp/cli-release
 
 通过 `cli.Run(ctx, args, cliprot.Options{Input: input, Output: output, Signals: signals})` 调用，`cliprot` 导入 `cli/protocol`。Input、Output 必填，Signals 可选并由调用方注册。Run 返回错误，不退出进程。chat 返回时关闭 Input 和 workspace；init 和参数校验不接管 Input。Output 始终由调用方管理。
 
-源码入口从 `workspace/cmd/agent-engine` 迁移至 `cli/cmd/agent-engine`；新发布使用 `cli/v*` 标签和 `agent-engine-cli_*` 压缩包；旧 `workspace/v*` Release 属于历史构建。
+源码入口从 `workspace/cmd/agent-engine` 迁移至 `cli/cmd/agent-engine`；新发布使用 `cli/v*` 标签和 `agent-engine-cli_*` 压缩包；旧 `workspace/v*`、`agent/v*`、`ai-tool-loop/v*` 标签与 Releases 已清理。

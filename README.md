@@ -67,4 +67,4 @@ MIT
 
 ## Versioning and releases
 
-Use `ai-sdk/v*` tags for the public SDK and `cli/v*` tags for the application. Only CLI tags trigger GitHub Releases with binaries. Other modules remain internal dependencies built from the same checkout; existing tags remain historical references. See [CLI publishing](./cli/README.md#publishing).
+Use `ai-sdk/v*` tags for the public SDK and `cli/v*` tags for the application. Only CLI tags trigger GitHub Releases with binaries. Other modules remain internal dependencies built from the same checkout; legacy workspace, agent and ai-tool-loop tags and Releases have been removed. See [CLI publishing](./cli/README.md#publishing).

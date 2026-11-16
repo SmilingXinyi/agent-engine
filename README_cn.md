@@ -88,4 +88,4 @@ MIT
 
 ## 版本与发布
 
-公开 SDK 使用 `ai-sdk/v*` 标签，应用使用 `cli/v*` 标签；只有 CLI 标签触发带二进制附件的 GitHub Release。其他模块保留为内部依赖，随同一份仓库源码构建，已有标签作为历史记录保留。参见 [CLI 发布流程](./cli/README_cn.md#发布流程)。
+公开 SDK 使用 `ai-sdk/v*` 标签，应用使用 `cli/v*` 标签；只有 CLI 标签触发带二进制附件的 GitHub Release。其他模块保留为内部依赖，随同一份仓库源码构建，旧 workspace、agent 和 ai-tool-loop 标签及 Releases 已清理。参见 [CLI 发布流程](./cli/README_cn.md#发布流程)。
