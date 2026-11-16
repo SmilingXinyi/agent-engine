@@ -1,82 +1,8 @@
 # Workspace
 
-单机单用户的项目执行环境。每个项目目录拥有独立的模型配置、MCP、skills 和一份可继续的对话上下文；只支持 macOS、Linux。CLI 组合现有模块，不引入第二套 Agent 或工具循环。
+面向 macOS、Linux 单机单用户的项目运行环境。负责组装 Agent、内置工具、Skill、MCP，以及持久化对话上下文；不解析命令、不读取终端输入。
 
-## 下载 CLI
-
-从 [GitHub Releases](https://github.com/SmilingXinyi/agent-engine/releases) 下载 `workspace/v0.1.0` 对应平台的压缩包：
-
-| 平台 | 架构 | 文件后缀 |
-| --- | --- | --- |
-| macOS | Apple Silicon | `darwin_arm64.tar.gz` |
-| macOS | Intel | `darwin_amd64.tar.gz` |
-| Linux | x86-64 | `linux_amd64.tar.gz` |
-| Linux | ARM64 | `linux_arm64.tar.gz` |
-
-文件名格式为 `agent-engine-workspace_v0.1.0_<系统>_<架构>.tar.gz`。每包包含 `agent-engine`、`README.md` 和 `README_cn.md`，无需安装 Go。Release 同时提供 `SHA256SUMS` 校验文件。
-
-以 Apple Silicon 为例，下载并解压后执行：
-
-~~~bash
-tar -xzf agent-engine-workspace_v0.1.0_darwin_arm64.tar.gz
-./agent-engine init /path/to/project
-export AGENT_LLM_MODEL='your-model'
-export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
-export AGENT_LLM_API_KEY='your-key'
-./agent-engine chat /path/to/project
-~~~
-
-产物是独立的 Workspace Agent CLI，支持本页描述的配置、工具、上下文持久化和恢复能力；模型服务、凭据、外部 MCP 服务器及其运行环境仍由用户配置。
-
-## 从源码运行
-
-从仓库根目录运行，目标项目目录须已存在：
-
-~~~bash
-go run ./workspace/cmd/agent-engine init /path/to/project
-export AGENT_LLM_MODEL='your-model'
-export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
-export AGENT_LLM_API_KEY='your-key'  # 接口无需认证时可不设置
-go run ./workspace/cmd/agent-engine chat /path/to/project
-
-# 明确选择自动执行；flags 必须放在目录参数之前
-go run ./workspace/cmd/agent-engine chat --approval auto /path/to/project
-
-# 构建独立程序
-go build -o /tmp/agent-engine ./workspace/cmd/agent-engine
-~~~
-
-省略目录时使用当前目录，不搜索父目录。`init` 不覆盖已有文件，也不调用模型、执行工具或连接 MCP。请在项目版本控制忽略规则中加入 `.agents/state/`。
-
-`chat` 自动恢复同一份上下文，等待用户输入，不自动续跑未完成任务。首版显示完整模型响应与工具进度，不提供流式输出。
-
-| 命令 | 行为 |
-| --- | --- |
-| `/help` | 查看命令 |
-| `/history` | 展示最近一次重置后的完整消息 JSON，包括工具调用和结果 |
-| `/reset` | 确认后清空当前上下文，追加重置事件，保留原始审计记录 |
-| `/exit` | 退出并释放 MCP 和 workspace 锁 |
-
-执行时 Ctrl+C 取消当前运行并返回提示符，再次 Ctrl+C 请求退出；非交互输入时，空闲 Ctrl+C 或 EOF 退出。取消模型、Shell 或 MCP 调用依赖后端响应 context。工具确认的 EOF 或读取失败不会批准执行。
-
-## 交互输入
-
-当前源码版本在 stdin、stdout 均为终端且 `TERM` 不是 `dumb` 时自动启用 [Bubbline](https://github.com/knz/bubbline)，提供局部多行编辑，不占用全屏。已发布的 `workspace/v0.1.0` 仍使用旧版单行输入，需要从源码重新构建才能体验这些功能。
-
-| 按键 | 行为 |
-| --- | --- |
-| Enter | 提交整段输入 |
-| Ctrl+J / Ctrl+O / Alt+Enter | 插入换行 |
-| 上下键 | 跨行移动；到达输入边界后召回历史 |
-| Ctrl+R | 搜索输入历史；Enter 取回结果，再按 Enter 提交 |
-| Ctrl+C | 清空非空草稿；输入为空时退出 |
-| Ctrl+D | 当前为空行时结束输入，其他位置按编辑器规则删除字符 |
-
-支持中文和多行粘贴，括号粘贴模式下的换行不会自动提交。Shift+Enter 是否能产生独立按键取决于终端；这版不启用扩展键盘协议，可使用上述换行键，或让终端将 Shift+Enter 映射为 Ctrl+J（LF）。
-
-输入历史只从当前 workspace 的 NDJSON 中提取用户消息，不保存第二份历史文件；重开可召回，`/reset` 后清空可召回内容。工具确认和重置确认不读取对话历史、不保存确认答案；工具确认中的 Ctrl+C 直接中断当前执行。
-
-管道、文件重定向或 `TERM=dumb` 自动沿用逐行输入，不输出编辑器控制序列。无论哪种模式都只有一个输入所有者，编辑结束或取消后恢复终端状态，运行中的工具和模型不会与编辑器同时读取 stdin。
+[CLI 模块](../cli/README_cn.md) 负责命令入口、多行编辑、审批提示与输出展示。CLI 会话创建 workspace，通过 Execute/History/Reset 调用能力，退出时 Close 释放资源。
 
 ## 目录与配置
 
@@ -135,7 +61,7 @@ stdio 默认工作目录是项目根目录；相对 `dir` 和包含路径分隔�
 
 ## 确认与资源边界
 
-`--approval writes` 是默认策略：内置 `read_file`、`list_directory` 和本地 `get_skill` 直接执行；写入、补丁、Shell、所有 MCP 调用逐次确认。即使 MCP 工具名字与未启用的内置读取工具相同，也需要确认。`all` 确认每个工具；`auto` 自动执行已启用工具。只有 `y` / `yes` 批准，拒绝作为工具错误反馈模型，允许它继续处理。
+`ApprovalWrites` 是默认策略：内置 `read_file`、`list_directory` 和本地 `get_skill` 直接执行；写入、补丁、Shell、所有 MCP 调用逐次确认。即使 MCP 工具名字与未启用的内置读取工具相同，也需要确认。`ApprovalAll` 确认每个工具；`ApprovalAuto` 自动执行已启用工具。确认由调用方的 ConfirmTool 回调提供；未提供回调时拒绝需要确认的调用。拒绝作为工具错误反馈模型，允许它继续处理。
 
 文件工具使用已有根目录限制。Shell 工作目录不是沙箱，MCP 和 Shell 继承服务进程的权限与环境。不同 workspace 是配置与上下文隔离，不是操作系统隔离。
 
@@ -189,22 +115,3 @@ go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools
 ~~~
 
 测试不依赖真实模型或外部 MCP 服务：使用假 Provider、临时目录、受控 stdio MCP 子进程及真实进程退出验证恢复、锁和资源释放。Shell 相关测试缺少 `sh` 时明确跳过；符号链接不可用时跳过对应边界测试。
-
-## 发布流程
-
-推送 `workspace/v*` tag 自动触发 `.github/workflows/workspace-release.yml`。工作流先在 Linux 和 macOS 上运行完整工作区 race 测试及 CLI 冒烟验证，再交叉构建四个平台包。全部成功后创建 Release 草稿、上传压缩包及校验文件，最后公开 Release；其他模块的 tag 不触发此流程。
-
-~~~bash
-git tag -a workspace/v0.1.0 -m 'Release workspace CLI v0.1.0'
-git push origin refs/tags/workspace/v0.1.0
-~~~
-
-本地可复用同一打包脚本（在仓库根目录执行）：
-
-~~~bash
-bash workspace/scripts/package-release.sh darwin arm64 v0.1.0 /tmp/workspace-release
-~~~
-
-构建关闭 CGO，不打包本机 `.agents` 配置、凭据或对话历史。工作流仅在发布 job 获得 `contents: write` 权限；失败后可在 Actions 页面重跑，已有同名附件会被替换。带版本后缀的 tag（例如 `workspace/v0.2.0-rc.1`）会发布为 prerelease。
-
-也可在 Actions 页面使用 Run workflow，填写已有的 workspace tag；或运行 `gh workflow run workspace-release.yml --ref main -f tag=workspace/v0.1.0`。手动发布仍检出指定 tag 的源码进行测试与打包，不使用 main 的应用代码，不修改 tag。

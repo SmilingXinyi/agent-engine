@@ -10,7 +10,8 @@ This repository is structured as a Go multi-module workspace using `go.work`.
 - `agent`: Prompt/history assembly over AI Tool Loop. See [usage](./agent/README_cn.md).
 - `agent-skill`: Local SKILL.md loading, metadata listings and on-demand instruction tools. See [usage](./agent-skill/README_cn.md).
 - `mcp-runtime`: MCP stdio, Streamable HTTP and legacy SSE connections and tool discovery. See [usage](./mcp-runtime/README_cn.md).
-- `workspace`: Single-user local CLI, project-specific MCP/skills and durable NDJSON conversation history. See [usage](./workspace/README.md).
+- `workspace`: Terminal-independent project runtime, MCP/skills and durable NDJSON history. See [usage](./workspace/README.md).
+- `cli`: Commands, inline terminal interaction and workspace session lifecycle. See [usage](./cli/README.md).
 
 ## Coding Guidelines
 
@@ -35,11 +36,11 @@ go work sync
 On macOS or Linux, initialize an existing project directory and start a persistent conversation:
 
 ```bash
-go run ./workspace/cmd/agent-engine init /path/to/project
+go run ./cli/cmd/agent-engine init /path/to/project
 export AGENT_LLM_MODEL='your-model'
 export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
 export AGENT_LLM_API_KEY='your-key'
-go run ./workspace/cmd/agent-engine chat /path/to/project
+go run ./cli/cmd/agent-engine chat /path/to/project
 ```
 
 Each project owns its configuration and `.agents/state/history.ndjson`. Reopening resumes the same context. Writes, Shell and MCP calls require confirmation by default.
@@ -57,9 +58,13 @@ See [example configuration and options](./examples/README_cn.md).
 Run tests across the workspace:
 
 ```bash
-go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/...
+go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
 ```
 
 ## License
 
 MIT
+
+## Versioning and releases
+
+Use `ai-sdk/v*` tags for the public SDK and `cli/v*` tags for the application. Only CLI tags trigger GitHub Releases with binaries. Other modules remain internal dependencies built from the same checkout; existing tags remain historical references. See [CLI publishing](./cli/README.md#publishing).

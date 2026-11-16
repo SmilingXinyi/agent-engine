@@ -1,62 +1,8 @@
 # Workspace
 
-A local, single-user CLI for macOS and Linux. Each project owns independent model settings, MCP servers, skills, and one durable conversation. This module composes the existing Agent and tool loop.
+Terminal-independent project runtime for a single local user on macOS and Linux. Workspace assembles Agent, built-in tools, skills and MCP, and owns durable conversation history. It does not parse commands or read terminal input.
 
-## Download the CLI
-
-Download a `workspace/v0.1.0` archive from [GitHub Releases](https://github.com/SmilingXinyi/agent-engine/releases). Supported targets are `darwin_arm64` (Apple Silicon), `darwin_amd64` (Intel macOS), `linux_amd64` (x86-64) and `linux_arm64`. Archives are named `agent-engine-workspace_v0.1.0_<os>_<arch>.tar.gz` and contain `agent-engine` plus English and Chinese READMEs. `SHA256SUMS` is provided with the release.
-
-For example, on Apple Silicon:
-
-~~~bash
-tar -xzf agent-engine-workspace_v0.1.0_darwin_arm64.tar.gz
-./agent-engine init /path/to/project
-export AGENT_LLM_MODEL='your-model'
-export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
-export AGENT_LLM_API_KEY='your-key'
-./agent-engine chat /path/to/project
-~~~
-
-No Go installation is required. The executable is the standalone Workspace Agent CLI with project configuration, tools and persistent conversation support; configure your own model service, credentials, and external MCP server executables/runtimes.
-
-## Run from source
-
-Run from the repository root; the project directory must already exist:
-
-~~~bash
-go run ./workspace/cmd/agent-engine init /path/to/project
-export AGENT_LLM_MODEL='your-model'
-export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
-export AGENT_LLM_API_KEY='your-key'
-go run ./workspace/cmd/agent-engine chat /path/to/project
-
-# Flags precede the directory. Explicitly opt into unattended execution:
-go run ./workspace/cmd/agent-engine chat --approval auto /path/to/project
-go build -o /tmp/agent-engine ./workspace/cmd/agent-engine
-~~~
-
-The default directory is the current directory; no parent search occurs. Initialization preserves existing files and runs no model, tools, or MCP servers. Add `.agents/state/` to your project's version-control ignore rules.
-
-Commands: `/help`, `/history` (current messages as JSON), `/reset` (confirmed context reset; audit events retained), `/exit`. Reopening restores the context but waits for a new prompt. Ctrl+C cancels an active execution; another interrupt requests exit. In plain input mode, an idle interrupt or EOF exits and releases resources. Responses are complete messages, not streaming output.
-
-## Interactive editing
-
-Current source builds automatically use [Bubbline](https://github.com/knz/bubbline) when both stdin and stdout are terminals and `TERM` is not `dumb`. Editing stays inline rather than taking over the screen. Published `workspace/v0.1.0` binaries retain the original single-line input; rebuild from source to try this integration.
-
-| Keys | Behavior |
-| --- | --- |
-| Enter | Submit the whole input |
-| Ctrl+J / Ctrl+O / Alt+Enter | Insert a newline |
-| Up / Down | Move across lines; recall history at input boundaries |
-| Ctrl+R | Search input history; Enter recalls the match, another Enter submits |
-| Ctrl+C | Clear a draft; exit when input is empty |
-| Ctrl+D | Finish input on an empty line; otherwise use the editor's deletion behavior |
-
-Unicode and bracketed multiline paste are supported; pasted newlines do not submit the prompt. Shift+Enter depends on terminal key encoding. This integration does not enable an extended keyboard protocol; use a supported newline key or configure the terminal to send Ctrl+J (LF) for Shift+Enter.
-
-Recall history comes only from user messages in the current workspace's NDJSON, with no extra history file. It survives reopening and clears after `/reset`. Approval/reset prompts have independent editors without conversation history, and their answers are not added to recall history. Ctrl+C during tool approval interrupts that execution immediately.
-
-Pipes, redirected files or `TERM=dumb` retain plain line-by-line input with no editor escape sequences. A single owner reads stdin in each phase; editing or cancellation restores terminal state before returning to execution.
+The [CLI module](../cli/README.md) owns command dispatch, inline editing, approval prompts and output. Its session opens a workspace, calls Execute/History/Reset, and closes it on exit.
 
 ## Project configuration
 
@@ -94,7 +40,7 @@ System context includes the workspace description, configured prompt, root `AGEN
 
 `mcp.json` uses the [existing MCP configuration](../mcp-runtime/README_cn.md), independently of tools configuration. Enabled stdio servers default to the project directory. Relative `dir` values and relative commands containing a path separator resolve against the project root; bare commands use PATH. Arguments are interpreted by the subprocess in its working directory. Startup failure closes resources already created.
 
-Default `--approval writes` automatically permits only local `read_file`, `list_directory` and `get_skill`. Writes, patches, Shell and every MCP tool require `y`/`yes`. `all` confirms every call; `auto` permits enabled calls. Denial becomes a tool error for the model. Confirmation EOF or read failure never approves execution.
+The default `ApprovalWrites` policy automatically permits only local `read_file`, `list_directory` and `get_skill`. Writes, patches, Shell and every MCP tool require the caller’s approval callback. `ApprovalAll` confirms every call; `ApprovalAuto` permits enabled calls. Denial becomes a tool error for the model. A missing confirmation callback denies protected calls.
 
 File tools enforce their existing root boundary. Shell and MCP retain the process's permissions and environment; a working directory is not a sandbox. Workspace separation isolates configuration and context, not the operating system.
 
@@ -123,19 +69,3 @@ go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools
 ~~~
 
 Tests use fake Providers, temporary directories, controlled stdio MCP processes and process crashes, with no live model or external MCP server. Shell tests explicitly skip when `sh` is missing; symlink tests skip if unsupported. See [中文说明](./README_cn.md) for detailed configuration and examples.
-
-## Publishing
-
-Pushing a `workspace/v*` tag triggers `.github/workflows/workspace-release.yml`. The workflow runs all workspace race tests and native CLI smoke checks on Linux and macOS, cross-compiles four archives, then uploads them and `SHA256SUMS` to a draft GitHub Release before publishing it. Other module tags do not trigger this workflow.
-
-~~~bash
-git tag -a workspace/v0.1.0 -m 'Release workspace CLI v0.1.0'
-git push origin refs/tags/workspace/v0.1.0
-
-# Reuse the same packaging step locally from the repository root:
-bash workspace/scripts/package-release.sh darwin arm64 v0.1.0 /tmp/workspace-release
-~~~
-
-CGO is disabled; project configurations, credentials and conversation histories are never packaged. Only the release job has `contents: write`. Failed runs can be rerun; same-name assets are replaced. Version suffixes such as `workspace/v0.2.0-rc.1` produce prereleases.
-
-To publish an existing tag manually, use Run workflow in Actions or `gh workflow run workspace-release.yml --ref main -f tag=workspace/v0.1.0`. Manual runs also check out and test the specified tag, without moving it or packaging main's application code.

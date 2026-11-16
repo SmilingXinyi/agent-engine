@@ -10,7 +10,8 @@
 - `agent`: Prompt 与历史上下文组织，委托 AI Tool Loop 执行，参见[使用说明](./agent/README_cn.md)。
 - `agent-skill`: 本地 SKILL.md 解析、技能目录和按需读取工具，参见[使用说明](./agent-skill/README_cn.md)。
 - `mcp-runtime`: MCP stdio / Streamable HTTP / legacy SSE 连接、工具发现及执行适配，参见[使用说明](./mcp-runtime/README_cn.md)。
-- `workspace`: 单机 CLI、项目独立的 MCP / skills 和 NDJSON 持久化上下文，参见[使用说明](./workspace/README_cn.md)。
+- `workspace`: 终端无关的项目运行环境、MCP / skills 和 NDJSON 持久化上下文，参见[使用说明](./workspace/README_cn.md)。
+- `cli`: 命令入口、终端交互与 workspace 会话生命周期，参见[使用说明](./cli/README_cn.md)。
 
 ## 开发规范
 
@@ -35,11 +36,11 @@ go work sync
 在 macOS 或 Linux 上，为已有项目目录初始化配置并开始持续对话：
 
 ```bash
-go run ./workspace/cmd/agent-engine init /path/to/project
+go run ./cli/cmd/agent-engine init /path/to/project
 export AGENT_LLM_MODEL='your-model'
 export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
 export AGENT_LLM_API_KEY='your-key'
-go run ./workspace/cmd/agent-engine chat /path/to/project
+go run ./cli/cmd/agent-engine chat /path/to/project
 ```
 
 每个项目独立保存配置和 `.agents/state/history.ndjson`，重新打开继续同一份上下文。写入、Shell 和 MCP 调用默认逐次确认。
@@ -57,7 +58,7 @@ go run ./examples/remote-desktop-agent/main.go ./examples/remote-desktop-agent/o
 执行测试：
 
 ```bash
-go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/...
+go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
 ```
 
 ## 历史实现的取舍
@@ -84,3 +85,7 @@ MCP 图片等非文本结果目前仍序列化为 JSON 文本。这与旧实现�
 ## 许可证
 
 MIT
+
+## 版本与发布
+
+公开 SDK 使用 `ai-sdk/v*` 标签，应用使用 `cli/v*` 标签；只有 CLI 标签触发带二进制附件的 GitHub Release。其他模块保留为内部依赖，随同一份仓库源码构建，已有标签作为历史记录保留。参见 [CLI 发布流程](./cli/README_cn.md#发布流程)。

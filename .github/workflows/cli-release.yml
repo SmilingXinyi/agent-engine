@@ -1,13 +1,13 @@
-name: Release Workspace CLI
+name: Release CLI
 
 on:
   push:
     tags:
-      - 'workspace/v*'
+      - 'cli/v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing workspace/vX.Y.Z tag to publish'
+        description: 'Existing cli/vX.Y.Z tag to publish'
         required: true
         type: string
 
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: workspace-release-${{ inputs.tag || github.ref_name }}
+  group: cli-release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -32,11 +32,11 @@ jobs:
         # Use Intel macOS runners to avoid ARM hosted-runner capacity delays.
         os: [ubuntu-latest, macos-15-intel]
     steps:
-      - name: Validate the workspace release tag
+      - name: Validate the CLI release tag
         shell: bash
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^workspace/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Expected an existing workspace/vX.Y.Z tag." >&2
+          if [[ ! "$RELEASE_TAG" =~ ^cli/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Expected an existing cli/vX.Y.Z tag." >&2
             exit 1
           fi
       - uses: actions/checkout@v6
@@ -47,12 +47,12 @@ jobs:
           go-version: '1.25.x'
           cache-dependency-path: '**/go.sum'
       - name: Test the Go workspace with the race detector
-        run: go test -race ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/...
+        run: go test -race ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
       - name: Smoke test the native CLI without model calls
         shell: bash
         run: |
           set -euo pipefail
-          go build -o "$RUNNER_TEMP/agent-engine" ./workspace/cmd/agent-engine
+          go build -o "$RUNNER_TEMP/agent-engine" ./cli/cmd/agent-engine
           mkdir -p "$RUNNER_TEMP/smoke-project"
           "$RUNNER_TEMP/agent-engine" init "$RUNNER_TEMP/smoke-project"
           printf '/help\n/history\n/exit\n' |
@@ -77,17 +77,17 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: '**/go.sum'
-      - name: Build and package the standalone workspace CLI
+      - name: Build and package the standalone CLI
         shell: bash
         env:
           TARGET_OS: ${{ matrix.goos }}
           TARGET_ARCH: ${{ matrix.goarch }}
         run: |
           set -euo pipefail
-          bash workspace/scripts/package-release.sh "$TARGET_OS" "$TARGET_ARCH" "${RELEASE_TAG#workspace/}" dist
+          bash cli/scripts/package-release.sh "$TARGET_OS" "$TARGET_ARCH" "${RELEASE_TAG#cli/}" dist
       - uses: actions/upload-artifact@v4
         with:
-          name: workspace-release-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: cli-release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 7
@@ -102,7 +102,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v5
         with:
-          pattern: workspace-release-*
+          pattern: cli-release-*
           merge-multiple: true
           path: dist
       - name: Create checksums and publish all release assets
@@ -114,11 +114,11 @@ jobs:
           set -euo pipefail
           archives=(dist/*.tar.gz)
           if [[ ${#archives[@]} -ne 4 ]]; then
-            echo "Expected all four workspace CLI archives before publishing." >&2
+            echo "Expected all four CLI archives before publishing." >&2
             exit 1
           fi
           (cd dist && sha256sum ./*.tar.gz > SHA256SUMS)
-          cat > "$RUNNER_TEMP/workspace-release-notes.md" <<'NOTES'
+          cat > "$RUNNER_TEMP/cli-release-notes.md" <<'NOTES'
           独立的单机 Agent Workspace CLI，支持 macOS / Linux 的 amd64 和 arm64 架构。
 
           下载对应平台的压缩包并解压，无需 Go 环境；压缩包中包含 agent-engine 和中英文使用说明。SHA256SUMS 可用于校验下载文件。
@@ -137,8 +137,8 @@ jobs:
           NOTES
           if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --draft \
-              --title "Agent Workspace ${RELEASE_TAG#workspace/}" \
-              --notes-file "$RUNNER_TEMP/workspace-release-notes.md"
+              --title "Agent CLI ${RELEASE_TAG#cli/}" \
+              --notes-file "$RUNNER_TEMP/cli-release-notes.md"
           fi
           gh release upload "$RELEASE_TAG" "${archives[@]}" dist/SHA256SUMS --clobber
           if [[ "$RELEASE_TAG" == *-* ]]; then

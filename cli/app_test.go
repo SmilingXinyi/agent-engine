@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	cliprot "github.com/SmilingXinyi/agent-engine/cli/protocol"
 	"github.com/SmilingXinyi/agent-engine/workspace"
 	"github.com/SmilingXinyi/agent-engine/workspace/protocol"
 )
@@ -45,7 +48,7 @@ func TestInitAndArgumentErrors(t *testing.T) {
 	root := t.TempDir()
 	var output bytes.Buffer
 	for range 2 {
-		if err := run(t.Context(), []string{"init", root}, io.NopCloser(strings.NewReader("")), &output, nil); err != nil {
+		if err := Run(t.Context(), []string{"init", root}, cliprot.Options{Input: io.NopCloser(strings.NewReader("")), Output: &output}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -53,7 +56,7 @@ func TestInitAndArgumentErrors(t *testing.T) {
 		t.Fatal(output.String())
 	}
 	for _, args := range [][]string{nil, {"invalid"}, {"chat", "--approval", "invalid", root}, {"chat", root, "extra"}} {
-		if err := run(t.Context(), args, io.NopCloser(strings.NewReader("")), &output, nil); err == nil {
+		if err := Run(t.Context(), args, cliprot.Options{Input: io.NopCloser(strings.NewReader("")), Output: &output}); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
@@ -257,6 +260,50 @@ func TestEOFOrIdleInterruptClosesWorkspace(t *testing.T) {
 		}
 		if err := instance.Close(); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// Exercise the exported runner, including output hooks and workspace ownership.
+func TestRunChatLifecycle(t *testing.T) {
+	root := project(t)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"choices":[{"message":{"role":"assistant","content":"hello from model"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+	t.Setenv("AGENT_LLM_BASE_URL", server.URL+"/v1")
+	t.Setenv("AGENT_LLM_TOKEN", "")
+	t.Setenv("AGENT_LLM_API_KEY", "")
+	var output bytes.Buffer
+	input := &ownedInput{Reader: strings.NewReader("hello\n/exit\n")}
+	if err := Run(t.Context(), []string{"chat", root}, cliprot.Options{Input: input, Output: &output}); err != nil {
+		t.Fatal(err)
+	}
+	if !input.closed || !strings.Contains(output.String(), "hello from model") || !strings.Contains(output.String(), "[run] stop=natural") {
+		t.Fatalf("closed=%t output=%s", input.closed, output.String())
+	}
+	instance, err := workspace.Open(t.Context(), root, protocol.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	if len(instance.History()) != 2 {
+		t.Fatalf("history=%v", instance.History())
+	}
+}
+
+type ownedInput struct {
+	*strings.Reader
+	closed bool
+}
+
+func (input *ownedInput) Close() error { input.closed = true; return nil }
+
+func TestRunValidatesStreams(t *testing.T) {
+	for _, options := range []cliprot.Options{{}, {Input: io.NopCloser(strings.NewReader(""))}, {Output: io.Discard}} {
+		if err := Run(t.Context(), []string{"init", t.TempDir()}, options); err == nil {
+			t.Fatal("accepted missing stream")
 		}
 	}
 }
