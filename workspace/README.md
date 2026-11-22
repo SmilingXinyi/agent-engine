@@ -48,6 +48,18 @@ The default `ApprovalWrites` policy automatically permits only local `read_file`
 
 File tools enforce their existing root boundary. Shell and MCP retain the process's permissions and environment; a working directory is not a sandbox. Workspace separation isolates configuration and context, not the operating system.
 
+## Subagents
+
+Each immediate directory under `.agents/.subagents/` exposes one `subagent_<directory>` tool after reopening the workspace. Role names accept up to 55 lowercase ASCII letters, digits, underscores, and hyphens. For example, create `.agents/.subagents/repo_research/` with these files:
+
+| File | Example |
+| --- | --- |
+| `workspace.json` | `{"description":"Research repository behavior and cite file paths and lines"}` |
+| `prompt.md` | `Find the entry point, trace its callers, and cite the evidence.` |
+| `tools.json` | `{"builtinTools":{"read_file":{},"list_directory":{}}}` |
+
+The optional `model` field defaults to the workspace model. The subagent uses its own prompt plus the root `AGENTS.md`. Select at least one enabled local read-only tool from the parent workspace. Each delegation starts with fresh history and runs synchronously. A turn can delegate twice across all roles, with up to six model calls and 60 seconds per delegation. Full approval mode prompts for delegation and child tool calls. The parent history keeps the delegation request, bounded result, and child run ID and usage metadata.
+
 ## Durable NDJSON history
 
 `.agents/state/history.ndjson` is the source of the full execution history. Every newline-terminated JSON event has `version`, increasing `sequence`, `time`, `type`, optional `run_id` and `data`. Types are `run_started`, `user_message`, `model_message`, `tool_started`, `tool_result`, `run_ended` and `context_reset`. SDK messages, raw tool arguments and large JSON extension numbers are preserved.

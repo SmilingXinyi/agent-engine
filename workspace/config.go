@@ -24,7 +24,7 @@ func Init(directory string) error {
 		return err
 	}
 	agents := filepath.Join(root, ".agents")
-	for _, path := range []string{agents, filepath.Join(agents, "skills"), filepath.Join(agents, "state")} {
+	for _, path := range []string{agents, filepath.Join(agents, "skills"), filepath.Join(agents, "state"), filepath.Join(agents, subagentsDirectory)} {
 		if err := ensureDirectory(path); err != nil {
 			return err
 		}
@@ -102,7 +102,7 @@ func ensureDirectory(path string) error {
 	return nil
 }
 
-func loadResources(root string) ([]loopprot.Tool, mcpprot.Config, string, error) {
+func loadResources(root, instructions string) ([]loopprot.Tool, mcpprot.Config, string, error) {
 	agents := filepath.Join(root, ".agents")
 	config, err := toolsprot.LoadConfig(filepath.Join(agents, "tools.json"))
 	if err != nil {
@@ -168,13 +168,9 @@ func loadResources(root string) ([]loopprot.Tool, mcpprot.Config, string, error)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, mcpConfig, "", fmt.Errorf("read workspace prompt: %w", err)
 	}
-	instructions, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, mcpConfig, "", err
-	}
 	listing := agentskill.BuildListing(skills)
 	contextParts := []string{}
-	for _, part := range []string{string(prompt), string(instructions), listing} {
+	for _, part := range []string{string(prompt), instructions, listing} {
 		if part != "" {
 			contextParts = append(contextParts, part)
 		}

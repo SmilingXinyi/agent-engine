@@ -76,7 +76,7 @@ A directory stays readable when each file has one job and the directory has few 
 - Constructors return `ai-tool-loop/protocol.Tool` directly. Do not introduce a second Tool interface, type alias, execution loop, or registry abstraction.
 - Each capability package owns its tool definitions, input validation, execution, and adjacent tests. Inject runtime dependencies and options through constructors; do not obtain application state from Agent or global variables.
 - Public configuration and result types belong in `ai-tools/protocol/types.go`; their methods and configuration parsing belong in `ai-tools/protocol/methods.go`. Capability packages depend on protocol, never on the `ai-tools` module root.
-- Production code does not depend on Agent, MCP implementations, or model providers. Callers combine built-in, Skill, and MCP tools and pass them to the existing loop/Agent.
+- The `subagent` capability may depend on Agent to adapt an injected instance into a tool. Other capability packages do not depend on Agent. Production code does not depend on MCP implementations or model providers. Callers combine built-in, Skill, and MCP tools and pass them to the existing loop/Agent.
 
 ### 3.2 Explicit configuration and lifecycle
 

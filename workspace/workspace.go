@@ -32,6 +32,7 @@ type Workspace struct {
 	system        string
 	tools         []loopprot.Tool
 	readOnly      map[string]bool
+	subagents     map[string]bool
 	agent         *agent.Agent
 	history       *history
 	lock          *os.File
@@ -90,7 +91,15 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 			return nil, err
 		}
 	}
-	tools, mcpConfig, instructions, err := loadResources(root)
+	projectInstructions, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	tools, mcpConfig, instructions, err := loadResources(root, string(projectInstructions))
+	if err != nil {
+		return nil, err
+	}
+	roles, err := loadSubagentRoles(root, config.Model, string(projectInstructions), tools)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +125,9 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 			err = errors.Join(err, workspace.Close())
 		}
 	}()
+	if err := workspace.registerSubagents(provider, roles); err != nil {
+		return nil, err
+	}
 	workspace.history, err = openHistory(filepath.Join(state, "history.ndjson"), options.Warn)
 	if err != nil {
 		return nil, err
@@ -148,6 +160,9 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 	workspace.system = fmt.Sprintf("You are a local workspace assistant. Workspace root: %s\nFile tool paths are relative to this root. Shell and MCP are not sandboxed. Verify tool outcomes before reporting success.", root)
 	if instructions != "" {
 		workspace.system += "\n\n" + instructions
+	}
+	if len(workspace.subagents) > 0 {
+		workspace.system += "\n\n" + delegationInstructions
 	}
 	client := ai.NewClient(provider, aiprot.Hooks{
 		OnRequest: []aiprot.RequestHook{func(ctx context.Context, _ aiprot.RequestInfo) error {
@@ -199,9 +214,11 @@ func (workspace *Workspace) Execute(ctx context.Context, prompt string) (result 
 		workspace.mu.Unlock()
 	}()
 	var currentCallID string
+	delegations := 0
 	tools := make([]loopprot.Tool, len(workspace.tools))
 	for index, tool := range workspace.tools {
 		execute := tool.Execute
+		isSubagent := workspace.subagents[tool.Definition.Name]
 		tools[index] = tool
 		tools[index].Execute = func(ctx context.Context, arguments json.RawMessage) (aiprot.ToolResult, error) {
 			if err := ctx.Err(); err != nil {
@@ -209,6 +226,14 @@ func (workspace *Workspace) Execute(ctx context.Context, prompt string) (result 
 			}
 			if err := workspace.history.append(protocol.ToolStarted, workspace.history.runID(), protocol.EventData{ToolCallID: currentCallID}); err != nil {
 				return aiprot.ToolResult{}, err
+			}
+			if isSubagent {
+				if delegations == maxDelegationsPerTurn {
+					result := aiprot.TextToolResult(fmt.Sprintf("Status: delegation_limit\nThis turn has used its %d subagent delegations.", maxDelegationsPerTurn))
+					result.IsError = true
+					return result, nil
+				}
+				delegations++
 			}
 			return execute(ctx, arguments)
 		}

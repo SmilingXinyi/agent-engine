@@ -1,6 +1,6 @@
 # ai-tools
 
-内置工具库：一个 Go module，按能力划分 package。各包直接返回 `ai-tool-loop/protocol.Tool`，可独立使用、测试和验证。生产代码只依赖工具契约，不依赖 Agent、MCP SDK 或真实模型。
+内置工具库按能力划分 package。各包直接返回 `ai-tool-loop/protocol.Tool`，可独立使用、测试和验证。文件和 Shell 工具独立于 Agent，`subagent` 接受调用方配置好的 Agent。
 
 ## 工具
 
@@ -50,6 +50,10 @@
 默认超时 30 秒，与调用方 context 的截止时间取较早者。stdout、stderr 各保留最多 64 KiB，超过后继续排空输出并设置 `truncated`。非零退出码保留两个输出流，同时设置 `ToolResult.IsError`；启动失败、取消和超时返回 Go error。Unix 取消时终止进程组中的普通子进程；其他平台使用 `exec.CommandContext` 的直接进程终止机制。主动脱离进程组的进程不由该机制管理。
 
 Shell 的 `Dir` 是初始工作目录，并不限制命令的文件访问范围；文件工具的 Root 约束也不会应用到 Shell。调用方通过工具选择和现有 `ConfirmTool` 实施执行策略。
+
+### 子 Agent 工具
+
+调用方通过 `subagent.NewTool` 注入 Agent、工具名称、描述、请求模板和超时。工具接收 `task` 和可选 `context`，每次从空历史同步执行一次。结果正文包含状态和最多 2 KiB 的内容，元数据包含 `subagent_run_id` 和 `subagent_usage`。审批与工具权限通过请求模板传入。Workspace 的目录配置见 [子 Agent 配置](../workspace/README_cn.md#子-agent-配置)。
 
 ## JSON 配置与组装
 

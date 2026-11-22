@@ -61,6 +61,20 @@ project/
 
 stdio 默认工作目录是项目根目录；相对 `dir` 和包含路径分隔符的相对 `command` 按项目根目录解析，裸命令名沿用 PATH。参数由子进程按自身工作目录解释。MCP 配置与内置工具配置分开解析；打开时显式连接启用的服务器，失败时关闭已连接资源。
 
+## 子 Agent 配置
+
+`init` 创建 `.agents/.subagents/`。每个一级子目录注册一个内部工具，角色名可用小写字母、数字、下划线和连字符，最长 55 个字符。目录不存在或为空时不注册。下面的目录注册 `subagent_repo_research`，配置修改在重开 Workspace 后生效。
+
+| `.agents/.subagents/repo_research/` 中的文件 | 内容示例 |
+| --- | --- |
+| `workspace.json` | `{"description":"查证仓库中的实现并提供文件和行号"}` |
+| `prompt.md` | `先定位入口和调用方，再总结发现。列出支持结论的文件和行号。` |
+| `tools.json` | `{"builtinTools":{"read_file":{},"list_directory":{}}}` |
+
+`workspace.json` 可选填 `model`，默认沿用父 Workspace 模型。`prompt.md` 可省略，子运行会读取项目根目录 `AGENTS.md` 中的规则。`tools.json` 从父 Workspace 已启用的 `read_file` 和 `list_directory` 中至少选一个，沿用它们的项目根目录和限制。
+
+父模型根据职责说明委派，填写任务及必要背景。每次启动新的子运行，父轮同步等待。在所有角色间每轮最多委派两次，每次最多 6 次模型调用和 60 秒。默认审批模式直接允许只读委派，全量审批模式分别确认委派和子工具调用。委派参数和最终结果随父对话保存在历史中，工具结果元数据包含子运行 ID 和用量。子模型的中间消息留在本次运行中。
+
 ## 确认与资源边界
 
 `ApprovalWrites` 是默认策略：内置 `read_file`、`list_directory` 和本地 `get_skill` 直接执行；写入、补丁、Shell、所有 MCP 调用逐次确认。即使 MCP 工具名字与未启用的内置读取工具相同，也需要确认。`ApprovalAll` 确认每个工具；`ApprovalAuto` 自动执行已启用工具。确认由调用方的 ConfirmTool 回调提供；未提供回调时拒绝需要确认的调用。拒绝作为工具错误反馈模型，允许它继续处理。
