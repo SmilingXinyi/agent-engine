@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"testing"
+
 	"github.com/SmilingXinyi/agent-engine/agent"
 	"github.com/SmilingXinyi/agent-engine/agent/protocol"
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
-	"reflect"
-	"testing"
+	compressionprot "github.com/SmilingXinyi/agent-engine/compression/protocol"
 )
 
 func TestExecuteForwardsToolConfirmationAndDenialPolicy(t *testing.T) {
@@ -184,5 +186,92 @@ func TestExecuteRejectsInvalidInput(t *testing.T) {
 	cancel()
 	if _, err := assistant.Execute(ctx, protocol.Request{Model: "model", UserPrompt: "hello"}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+func TestCompressionRespectsExplicitOptInAndProviderOptions(t *testing.T) {
+	history := []aiprot.Message{
+		aiprot.TextMessage(aiprot.RoleUser, "old question"),
+		aiprot.TextMessage(aiprot.RoleAssistant, "old answer"),
+	}
+	request := protocol.Request{
+		Model: "model", History: history, UserPrompt: "new question",
+		Options:         loopprot.RunOptions{MaxHistoryRounds: 1},
+		ProviderOptions: map[string]any{"store": false, "previous_response_id": "ordinary"},
+	}
+	summaries := 0
+	assistant := agent.New(ai.NewClient(testProvider{generate: func(_ context.Context, input aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+		if input.Metadata[compressionprot.MetadataPurpose] == compressionprot.PurposeSummary {
+			summaries++
+			if !reflect.DeepEqual(input.ProviderOptions, map[string]any{"store": false, "service_tier": "default"}) {
+				t.Fatalf("summary provider options=%v", input.ProviderOptions)
+			}
+			return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant,
+				`{"user_goal":"summarized","decisions":"","key_facts":"","open_items":"","agreements":"","keep_recent_rounds":1}`)}, nil
+		}
+		if !reflect.DeepEqual(input.ProviderOptions, request.ProviderOptions) {
+			t.Fatalf("conversation provider options=%v", input.ProviderOptions)
+		}
+		if summaries == 0 && (len(input.Messages) != 1 || input.Messages[0].Text() != "new question") {
+			t.Fatalf("default history exceeded the hard limit: %+v", input.Messages)
+		}
+		return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "done")}, nil
+	}}, aiprot.Hooks{}))
+	if _, err := assistant.Execute(t.Context(), request); err != nil || summaries != 0 {
+		t.Fatalf("default run produced %d summaries: %v", summaries, err)
+	}
+	keep := 1
+	request.Options.Compression = &compressionprot.Config{
+		KeepRecentRounds: &keep, SummaryProviderOptions: map[string]any{"store": true, "service_tier": "default"},
+	}
+	if _, err := assistant.Execute(t.Context(), request); err != nil || summaries != 1 {
+		t.Fatalf("opt-in run produced %d summaries: %v", summaries, err)
+	}
+	if request.Options.Compression.SummaryProviderOptions["store"] != true {
+		t.Fatal("summary mutated caller configuration")
+	}
+}
+
+func TestCompressedContextResumesAfterIncompleteToolBatch(t *testing.T) {
+	for _, scenario := range []string{"max steps", "tool hook failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			first := aiprot.ToolCall{ID: "first", Name: "test", Arguments: json.RawMessage("{}")}
+			second := aiprot.ToolCall{ID: "second", Name: "test", Arguments: json.RawMessage("{}")}
+			assistant := agent.New(ai.NewClient(testProvider{generate: func(_ context.Context, request aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+				if request.Messages[len(request.Messages)-1].Text() == "continue" {
+					return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "resumed")}, nil
+				}
+				return aiprot.ModelResponse{Message: aiprot.Message{Role: aiprot.RoleAssistant, Parts: []aiprot.ContentPart{
+					{Type: aiprot.ContentToolCall, ToolCall: &first}, {Type: aiprot.ContentToolCall, ToolCall: &second},
+				}}}, nil
+			}}, aiprot.Hooks{}))
+			hookError := errors.New("stop after one tool")
+			options := loopprot.RunOptions{MaxSteps: 1, Compression: &compressionprot.Config{}}
+			if scenario == "tool hook failure" {
+				options.MaxSteps = 2
+				options.Hooks.OnToolEnd = func(context.Context, loopprot.ToolEndInfo) error { return hookError }
+			}
+			result, err := assistant.Execute(t.Context(), protocol.Request{
+				Model: "model", UserPrompt: "start", Options: options,
+				Tools: []loopprot.Tool{{Definition: aiprot.ToolDefinition{Name: "test"}, Execute: func(context.Context, json.RawMessage) (aiprot.ToolResult, error) {
+					return aiprot.TextToolResult("done"), nil
+				}}},
+			})
+			if scenario == "max steps" && (err != nil || result.StopReason != loopprot.StopMaxSteps || len(result.ToolCalls) != 0) {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			if scenario == "tool hook failure" && (!errors.Is(err, hookError) || len(result.ToolCalls) != 1) {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			if len(result.ContextMessages) != 1 || len(result.Messages[1].ToolCalls()) != 2 {
+				t.Fatalf("invalid history or execution record: %+v", result)
+			}
+			resumed, err := assistant.Execute(t.Context(), protocol.Request{
+				Model: "model", History: result.ContextMessages, UserPrompt: "continue",
+			})
+			if err != nil || resumed.LastResponse.Message.Text() != "resumed" {
+				t.Fatalf("could not resume: %v", err)
+			}
+		})
 	}
 }

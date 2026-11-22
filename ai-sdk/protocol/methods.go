@@ -165,6 +165,16 @@ func (result ToolResult) Clone() ToolResult {
 	return result
 }
 
+// Add accumulates usage across model calls.
+func (usage *Usage) Add(current Usage) {
+	usage.InputTokens += current.InputTokens
+	usage.OutputTokens += current.OutputTokens
+	usage.TotalTokens += current.TotalTokens
+	usage.ReasoningTokens += current.ReasoningTokens
+	usage.CacheReadTokens += current.CacheReadTokens
+	usage.CacheWriteTokens += current.CacheWriteTokens
+}
+
 // Clone copies the raw input schema bytes.
 func (definition ToolDefinition) Clone() ToolDefinition {
 	definition.InputSchema = append(json.RawMessage(nil), definition.InputSchema...)

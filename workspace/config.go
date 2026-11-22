@@ -33,6 +33,7 @@ func Init(directory string) error {
 		name  string
 		value any
 	}{
+		{"prompt.md", nil},
 		{"workspace.json", protocol.Config{MaxSteps: 40, MaxHistoryRounds: 10, TimeoutSeconds: 900}},
 		{"tools.json", toolsprot.Config{BuiltinTools: map[string]toolsprot.ToolConfig{
 			toolsprot.ReadFile: {}, toolsprot.ListDirectory: {}, toolsprot.WriteFile: {}, toolsprot.ApplyPatch: {}, toolsprot.Shell: {},
@@ -40,9 +41,13 @@ func Init(directory string) error {
 		{"mcp.json", mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{}}},
 	}
 	for _, config := range configs {
-		content, err := json.MarshalIndent(config.value, "", "  ")
-		if err != nil {
-			return err
+		var content []byte
+		if config.value != nil {
+			content, err = json.MarshalIndent(config.value, "", "  ")
+			if err != nil {
+				return err
+			}
+			content = append(content, '\n')
 		}
 		path := filepath.Join(agents, config.name)
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -52,7 +57,7 @@ func Init(directory string) error {
 		if err != nil {
 			return err
 		}
-		_, writeErr := file.Write(append(content, '\n'))
+		_, writeErr := file.Write(content)
 		err = errors.Join(writeErr, file.Sync(), file.Close())
 		if err != nil {
 			return err
@@ -159,12 +164,22 @@ func loadResources(root string) ([]loopprot.Tool, mcpprot.Config, string, error)
 		}
 		tools = append(tools, tool)
 	}
+	prompt, err := os.ReadFile(filepath.Join(agents, "prompt.md"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, mcpConfig, "", fmt.Errorf("read workspace prompt: %w", err)
+	}
 	instructions, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, mcpConfig, "", err
 	}
 	listing := agentskill.BuildListing(skills)
-	return tools, mcpConfig, string(instructions) + "\n\n" + listing, nil
+	contextParts := []string{}
+	for _, part := range []string{string(prompt), string(instructions), listing} {
+		if part != "" {
+			contextParts = append(contextParts, part)
+		}
+	}
+	return tools, mcpConfig, strings.Join(contextParts, "\n\n"), nil
 }
 
 func bindRoot(root string, configured *string) error {

@@ -16,6 +16,7 @@ import (
 	agentprot "github.com/SmilingXinyi/agent-engine/agent/protocol"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	compressionprot "github.com/SmilingXinyi/agent-engine/compression/protocol"
 	mcpprot "github.com/SmilingXinyi/agent-engine/mcp-runtime/protocol"
 	"github.com/SmilingXinyi/agent-engine/workspace/protocol"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -105,6 +106,152 @@ func events(t *testing.T, root string) []protocol.Event {
 		result = append(result, event)
 	}
 	return result
+}
+
+func TestWorkspaceCompactsModelContextAndKeepsFullJournal(t *testing.T) {
+	root := newProject(t)
+	keep := 1
+	writeJSON(t, filepath.Join(root, ".agents/workspace.json"), protocol.Config{
+		Model: "test-model", MaxHistoryRounds: 2,
+		Compression: &compressionprot.Config{KeepRecentRounds: &keep, MaxRecentRounds: 1, ToolResultTokens: 48},
+	})
+	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte(`{"builtinTools":{"read_file":{}}}`))
+	payload := strings.Repeat("payload-0123456789\n", 250)
+	writeFile(t, filepath.Join(root, "fixture.txt"), []byte(payload))
+
+	summaryCalls, modelCalls := 0, 0
+	workspace := openTest(t, root, protocol.OpenOptions{Provider: fakeProvider(func(_ context.Context, request aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+		if request.Metadata[compressionprot.MetadataPurpose] == compressionprot.PurposeSummary {
+			summaryCalls++
+			prompt := request.Messages[1].Text()
+			if len(request.Tools) != 0 || !strings.Contains(prompt, "first goal") || !strings.Contains(prompt, "second goal") {
+				t.Fatalf("summary was not generated from the old turns: %+v", request)
+			}
+			response := answer(`{"user_goal":"first and second goal","decisions":"keep source","key_facts":"fixture.txt","open_items":"read fixture","agreements":"preserve file","keep_recent_rounds":1}`)
+			response.Usage.TotalTokens = 11
+			return response, nil
+		}
+		modelCalls++
+		if modelCalls <= 2 {
+			return answer("recorded"), nil
+		}
+		if len(request.Messages) < 3 || !strings.HasPrefix(request.Messages[1].Text(), compressionprot.SummaryMarker) || request.Messages[2].Text() != "current goal" {
+			t.Fatalf("model received the wrong context: %+v", request.Messages)
+		}
+		if modelCalls == 3 {
+			return calls(aiprot.ToolCall{ID: "read-fixture", Name: "read_file", Arguments: json.RawMessage(`{"path":"fixture.txt"}`)}), nil
+		}
+		result := request.Messages[len(request.Messages)-1].Parts[0].ToolResult
+		if result == nil || result.ToolCallID != "read-fixture" || !strings.Contains(result.Text(), "[Tool result compacted]") {
+			t.Fatalf("model received the wrong tool result: %+v", result)
+		}
+		return answer("finished"), nil
+	})})
+	for _, prompt := range []string{"first goal", "second goal"} {
+		if _, err := workspace.Execute(t.Context(), prompt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := workspace.Execute(t.Context(), "current goal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := result.Messages[len(result.Messages)-2].ToolResults()[0]
+	if summaryCalls != 1 || modelCalls != 4 || len(result.Steps) != 2 || result.Usage.TotalTokens != 11 ||
+		!strings.Contains(original.Text(), payload) {
+		t.Fatalf("run did not keep a separate compacted context: summary calls=%d model calls=%d result=%+v", summaryCalls, modelCalls, result)
+	}
+	if err := workspace.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openTest(t, root, protocol.OpenOptions{})
+	history := reopened.History()
+	if len(history) != 8 || history[0].Text() != "first goal" || history[2].Text() != "second goal" ||
+		len(history[6].ToolResults()[0].Text()) < len(payload) || history[7].Text() != "finished" {
+		t.Fatalf("journal did not preserve the original messages: %+v", history)
+	}
+}
+
+func TestPromptFileSnapshotAndOrder(t *testing.T) {
+	root := newProject(t)
+	promptPath := filepath.Join(root, ".agents/prompt.md")
+	original := "# Custom instructions\n\n  保留原文和缩进。\n"
+	replacement := "# Updated instructions\n"
+	writeFile(t, promptPath, []byte(original))
+	writeFile(t, filepath.Join(root, "AGENTS.md"), []byte("Project conventions"))
+	skillDir := filepath.Join(root, ".agents/skills", "prompt-test")
+	if err := os.Mkdir(skillDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: prompt-test\ndescription: Skill listing marker\n---\nPrivate skill body"))
+	expectedPrompt := original
+	options := protocol.OpenOptions{Provider: fakeProvider(func(_ context.Context, request aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+		system := request.Messages[0].Text()
+		promptIndex := strings.Index(system, expectedPrompt)
+		projectIndex := strings.Index(system, "Project conventions")
+		skillIndex := strings.Index(system, "Skill listing marker")
+		if !strings.HasPrefix(system, "You are a local workspace assistant.") || promptIndex < 0 || projectIndex <= promptIndex || skillIndex <= projectIndex {
+			t.Errorf("unexpected system context order or contents: %q", system)
+		}
+		if expectedPrompt == replacement && strings.Contains(system, original) {
+			t.Error("reopened workspace retained old prompt")
+		}
+		return answer("done"), nil
+	})}
+	instance := openTest(t, root, options)
+	writeFile(t, promptPath, []byte(replacement))
+	for range 2 {
+		if _, err := instance.Execute(t.Context(), "hello"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := instance.Close(); err != nil {
+		t.Fatal(err)
+	}
+	expectedPrompt = replacement
+	reopened := openTest(t, root, options)
+	if _, err := reopened.Execute(t.Context(), "hello again"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOptionalPromptFileAndReadFailure(t *testing.T) {
+	for _, scenario := range []string{"missing", "empty", "unreadable"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := newProject(t)
+			promptPath := filepath.Join(root, ".agents/prompt.md")
+			if scenario != "empty" {
+				if err := os.Remove(promptPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "unreadable" {
+				// A directory produces a read error even when tests run as root.
+				if err := os.Mkdir(promptPath, 0700); err != nil {
+					t.Fatal(err)
+				}
+				instance, err := Open(t.Context(), root, protocol.OpenOptions{Provider: fakeProvider(nil)})
+				if err == nil {
+					instance.Close()
+					t.Fatal("accepted unreadable prompt")
+				}
+				if !strings.Contains(err.Error(), "read workspace prompt") {
+					t.Fatal(err)
+				}
+				return
+			}
+			instance := openTest(t, root, protocol.OpenOptions{Provider: fakeProvider(func(_ context.Context, request aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+				system := request.Messages[0].Text()
+				if !strings.HasPrefix(system, "You are a local workspace assistant.") || !strings.HasSuffix(system, "Verify tool outcomes before reporting success.") {
+					t.Errorf("unexpected default system context: %q", system)
+				}
+				return answer("done"), nil
+			})})
+			if _, err := instance.Execute(t.Context(), "hello"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func TestIndependentWorkspacesAndReopen(t *testing.T) {
@@ -442,6 +589,12 @@ func TestWorkspaceTimeout(t *testing.T) {
 
 func TestConfigBoundariesAndInitPreservesFiles(t *testing.T) {
 	root := newProject(t)
+	promptPath := filepath.Join(root, ".agents/prompt.md")
+	prompt, err := os.ReadFile(promptPath)
+	if err != nil || len(prompt) != 0 {
+		t.Fatalf("initial prompt=%q, err=%v", prompt, err)
+	}
+	writeFile(t, promptPath, []byte("# Custom prompt\n"))
 	configPath := filepath.Join(root, ".agents/workspace.json")
 	before, _ := os.ReadFile(configPath)
 	if err := Init(root); err != nil {
@@ -450,6 +603,10 @@ func TestConfigBoundariesAndInitPreservesFiles(t *testing.T) {
 	after, _ := os.ReadFile(configPath)
 	if !bytes.Equal(before, after) {
 		t.Fatal("init overwrote configuration")
+	}
+	prompt, err = os.ReadFile(promptPath)
+	if err != nil || string(prompt) != "# Custom prompt\n" {
+		t.Fatalf("init overwrote prompt: %q, err=%v", prompt, err)
 	}
 	for _, config := range []string{
 		"{\"builtinTools\":{\"read_file\":{}},\"filesystem\":{\"root\":\"..\"}}",

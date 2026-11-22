@@ -7,6 +7,7 @@ import (
 	"time"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
+	compressionprot "github.com/SmilingXinyi/agent-engine/compression/protocol"
 )
 
 const (
@@ -68,7 +69,7 @@ type ToolDeniedError struct {
 }
 
 // Request is one sequential execution. Generation settings are copied onto
-// every model call. Message.ProviderOptions travel with Messages.
+// each ordinary model call. Message.ProviderOptions travel with Messages.
 // MetadataRunID, MetadataStep, and the SDK request ID are reserved and
 // overwritten for each call. Extension data follows SDK Clone rules: use acyclic
 // JSON-shaped data for isolation; custom application objects remain shared.
@@ -88,13 +89,12 @@ type Request struct {
 }
 
 type RunOptions struct {
-	// MaxSteps counts model calls, including the final answer. Zero uses DefaultMaxSteps.
+	// MaxSteps counts ordinary model calls, including the final answer. Zero uses DefaultMaxSteps.
 	MaxSteps int
-	// MaxHistoryRounds bounds the rounds sent to the model, excluding system
-	// messages. A round groups user/developer input with an assistant reply and
-	// its tool results; another assistant reply starts another round. Zero uses
-	// DefaultMaxHistoryRounds. Full execution records are retained.
+	// MaxHistoryRounds triggers a summary when Compression is set. Otherwise
+	// it bounds the rounds sent to the model. Zero uses DefaultMaxHistoryRounds.
 	MaxHistoryRounds int
+	Compression      *compressionprot.Config
 	// ConfirmTool runs synchronously before each known tool executes. Nil allows
 	// execution without confirmation. Callbacks must honor context cancellation;
 	// errors and panics stop the run, regardless of ToolDenialPolicy.
@@ -104,17 +104,20 @@ type RunOptions struct {
 	Hooks            Hooks
 }
 
-// Result owns execution snapshots. Usage is cumulative; LastResponse and each
-// step's Response keep the provider's single-call usage. Hook errors can end a
-// run after a successful model response, so callers must also inspect StopReason.
+// Result owns execution snapshots. Usage includes summary calls; LastResponse
+// and Steps describe ordinary conversation calls. Hook errors can end a run
+// after a successful model response, so callers must also inspect StopReason.
 type Result struct {
 	RunID        string
 	LastResponse aiprot.ModelResponse
 	Messages     []aiprot.Message
-	Steps        []StepResult
-	ToolCalls    []ToolCallRecord
-	Usage        aiprot.Usage
-	StopReason   StopReason
+	// ContextMessages is the resumable working history when compression is
+	// enabled. Messages holds the full execution record.
+	ContextMessages []aiprot.Message
+	Steps           []StepResult
+	ToolCalls       []ToolCallRecord
+	Usage           aiprot.Usage
+	StopReason      StopReason
 }
 
 type StepResult struct {

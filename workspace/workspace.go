@@ -19,29 +19,32 @@ import (
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-sdk/providers/openai"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	compressionprot "github.com/SmilingXinyi/agent-engine/compression/protocol"
 	mcpruntime "github.com/SmilingXinyi/agent-engine/mcp-runtime"
 	"github.com/SmilingXinyi/agent-engine/workspace/protocol"
 )
 
 type Workspace struct {
-	mu           sync.Mutex
-	root         string
-	config       protocol.Config
-	options      protocol.OpenOptions
-	system       string
-	tools        []loopprot.Tool
-	readOnly     map[string]bool
-	agent        *agent.Agent
-	history      *history
-	lock         *os.File
-	runtime      *mcpruntime.Runtime
-	lifetime     context.Context
-	stopLifetime context.CancelFunc
-	runCancel    context.CancelFunc
-	runDone      chan struct{}
-	closed       bool
-	closeOnce    sync.Once
-	closeErr     error
+	mu            sync.Mutex
+	root          string
+	config        protocol.Config
+	options       protocol.OpenOptions
+	system        string
+	tools         []loopprot.Tool
+	readOnly      map[string]bool
+	agent         *agent.Agent
+	history       *history
+	lock          *os.File
+	runtime       *mcpruntime.Runtime
+	lifetime      context.Context
+	stopLifetime  context.CancelFunc
+	runCancel     context.CancelFunc
+	runDone       chan struct{}
+	checkpoint    *contextCheckpoint
+	checkpointErr error
+	closed        bool
+	closeOnce     sync.Once
+	closeErr      error
 }
 
 // Open loads a fixed configuration snapshot and explicitly starts its MCP
@@ -126,6 +129,10 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 			return nil, err
 		}
 	}
+	workspace.checkpoint, workspace.checkpointErr = workspace.loadContextCheckpoint()
+	if workspace.checkpointErr != nil {
+		workspace.warn(workspace.checkpointErr.Error())
+	}
 	workspace.runtime, err = mcpruntime.Start(lifetime, mcpConfig)
 	if err != nil {
 		return nil, err
@@ -138,13 +145,17 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 		}
 		seen[tool.Definition.Name] = true
 	}
-	workspace.system = fmt.Sprintf("You are a local workspace assistant. Workspace root: %s\nFile tool paths are relative to this root. Shell and MCP are not sandboxed. Verify tool outcomes before reporting success.\n\n%s\n\n%s", root, config.SystemPrompt, instructions)
+	workspace.system = fmt.Sprintf("You are a local workspace assistant. Workspace root: %s\nFile tool paths are relative to this root. Shell and MCP are not sandboxed. Verify tool outcomes before reporting success.", root)
+	if instructions != "" {
+		workspace.system += "\n\n" + instructions
+	}
 	client := ai.NewClient(provider, aiprot.Hooks{
 		OnRequest: []aiprot.RequestHook{func(ctx context.Context, _ aiprot.RequestInfo) error {
 			return errors.Join(ctx.Err(), workspace.history.healthy())
 		}},
 		OnResponse: []aiprot.ResponseHook{func(_ context.Context, info aiprot.ResponseInfo) error {
-			if info.Error != nil || len(info.Response.Message.Parts) == 0 {
+			if info.Error != nil || len(info.Response.Message.Parts) == 0 ||
+				info.Request.Metadata[compressionprot.MetadataPurpose] == compressionprot.PurposeSummary {
 				return nil
 			}
 			message := info.Response.Message.Clone()
@@ -165,6 +176,10 @@ func (workspace *Workspace) Execute(ctx context.Context, prompt string) (result 
 	if err := workspace.ready(); err != nil {
 		workspace.mu.Unlock()
 		return result, err
+	}
+	if workspace.checkpointErr != nil {
+		workspace.mu.Unlock()
+		return result, workspace.checkpointErr
 	}
 	if strings.TrimSpace(prompt) == "" {
 		workspace.mu.Unlock()
@@ -231,8 +246,11 @@ func (workspace *Workspace) Execute(ctx context.Context, prompt string) (result 
 		return nil
 	}
 	result, err = workspace.agent.Execute(runCtx, agentprot.Request{
-		Model: workspace.config.Model, SystemPrompt: workspace.system, History: workspace.history.snapshot(), UserPrompt: prompt, Tools: tools,
-		Options: loopprot.RunOptions{MaxSteps: workspace.config.MaxSteps, MaxHistoryRounds: workspace.config.MaxHistoryRounds, ConfirmTool: workspace.confirm, Hooks: hooks},
+		Model: workspace.config.Model, SystemPrompt: workspace.system, History: workspace.modelHistory(), UserPrompt: prompt, Tools: tools,
+		Options: loopprot.RunOptions{
+			MaxSteps: workspace.config.MaxSteps, MaxHistoryRounds: workspace.config.MaxHistoryRounds,
+			Compression: workspace.config.Compression, ConfirmTool: workspace.confirm, Hooks: hooks,
+		},
 	})
 	if runID := workspace.history.runID(); runID != "" {
 		if recoveryErr := workspace.history.completePending(workspace.options.Warn); recoveryErr != nil {
@@ -243,7 +261,12 @@ func (workspace *Workspace) Execute(ctx context.Context, prompt string) (result 
 			data.Error = "execution failed or was cancelled"
 			data.StopReason = loopprot.StopError
 		}
-		err = errors.Join(err, workspace.history.append(protocol.RunEnded, runID, data))
+		if endErr := workspace.history.append(protocol.RunEnded, runID, data); endErr != nil {
+			return result, errors.Join(err, endErr)
+		}
+		if err == nil && result.StopReason == loopprot.StopNatural {
+			err = workspace.saveContextCheckpoint(runID, result.ContextMessages)
+		}
 	}
 	return result, err
 }
@@ -279,7 +302,12 @@ func (workspace *Workspace) Reset(ctx context.Context) error {
 	if err := workspace.ready(); err != nil {
 		return err
 	}
-	return workspace.history.append(protocol.ContextReset, "", protocol.EventData{})
+	if err := workspace.history.append(protocol.ContextReset, "", protocol.EventData{}); err != nil {
+		return err
+	}
+	workspace.checkpoint = nil
+	workspace.checkpointErr = workspace.removeContextCheckpoint()
+	return workspace.checkpointErr
 }
 
 func (workspace *Workspace) ready() error {

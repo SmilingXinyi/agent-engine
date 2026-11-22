@@ -23,15 +23,22 @@ type pendingCall struct {
 	started bool
 }
 
+type completedRun struct {
+	runID        string
+	messageCount int
+}
+
 type history struct {
-	mu       sync.Mutex
-	file     *os.File
-	sequence uint64
-	messages []aiprot.Message
-	active   string
-	pending  map[string]*pendingCall
-	order    []string
-	poison   error
+	mu            sync.Mutex
+	file          *os.File
+	sequence      uint64
+	lastReset     uint64
+	completedRuns map[uint64]completedRun
+	messages      []aiprot.Message
+	active        string
+	pending       map[string]*pendingCall
+	order         []string
+	poison        error
 }
 
 func openHistory(path string, warn func(string)) (_ *history, err error) {
@@ -50,7 +57,10 @@ func openHistory(path string, warn func(string)) (_ *history, err error) {
 	if err := syncDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	history := &history{file: file, pending: make(map[string]*pendingCall)}
+	history := &history{
+		file: file, pending: make(map[string]*pendingCall),
+		completedRuns: make(map[uint64]completedRun),
+	}
 	reader := bufio.NewReader(file)
 	var offset int64
 	for {
@@ -194,9 +204,14 @@ func (history *history) apply(event protocol.Event) {
 			history.order = nil
 		}
 	case protocol.RunEnded:
+		if event.Data.StopReason == loopprot.StopNatural {
+			history.completedRuns[event.Sequence] = completedRun{runID: event.RunID, messageCount: len(history.messages)}
+		}
 		history.active = ""
 	case protocol.ContextReset:
+		history.lastReset = event.Sequence
 		history.messages = nil
+		clear(history.completedRuns)
 	}
 }
 
@@ -231,10 +246,15 @@ func (history *history) append(kind protocol.EventType, runID string, data proto
 }
 
 func (history *history) snapshot() []aiprot.Message {
+	return history.snapshotAfter(0)
+}
+
+func (history *history) snapshotAfter(messageCount int) []aiprot.Message {
 	history.mu.Lock()
 	defer history.mu.Unlock()
-	result := make([]aiprot.Message, len(history.messages))
-	for index, message := range history.messages {
+	messages := history.messages[messageCount:]
+	result := make([]aiprot.Message, len(messages))
+	for index, message := range messages {
 		result[index] = message.Clone()
 	}
 	return result

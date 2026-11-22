@@ -8,6 +8,7 @@ require (
 	github.com/SmilingXinyi/agent-engine/ai-sdk v0.7.0
 	github.com/SmilingXinyi/agent-engine/ai-tool-loop v0.1.0
 	github.com/SmilingXinyi/agent-engine/ai-tools v0.0.0
+	github.com/SmilingXinyi/agent-engine/compression v0.0.0
 	github.com/SmilingXinyi/agent-engine/mcp-runtime v0.0.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 )
@@ -33,5 +34,7 @@ replace github.com/SmilingXinyi/agent-engine/ai-sdk => ../ai-sdk
 replace github.com/SmilingXinyi/agent-engine/ai-tool-loop => ../ai-tool-loop
 
 replace github.com/SmilingXinyi/agent-engine/ai-tools => ../ai-tools
+
+replace github.com/SmilingXinyi/agent-engine/compression => ../compression
 
 replace github.com/SmilingXinyi/agent-engine/mcp-runtime => ../mcp-runtime

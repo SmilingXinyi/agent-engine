@@ -7,6 +7,7 @@ use (
 	./ai-sdk
 	./ai-tool-loop
 	./ai-tools
+	./compression
 	./mcp-runtime
 	./workspace
 )

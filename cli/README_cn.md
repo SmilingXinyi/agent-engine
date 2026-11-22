@@ -87,6 +87,7 @@ project/
   AGENTS.md
   .agents/
     workspace.json
+    prompt.md
     tools.json
     mcp.json
     skills/<skill-name>/SKILL.md
@@ -103,7 +104,6 @@ project/
   "baseURL": "https://your-provider.example/v1",
   "apiType": "chat_completions",
   "apiKeyEnv": "PROJECT_API_KEY",
-  "systemPrompt": "先检查项目约定，再进行修改。",
   "maxSteps": 40,
   "maxHistoryRounds": 10,
   "timeoutSeconds": 900
@@ -113,8 +113,10 @@ project/
 - 未指定 `model` 时按 `AGENT_MODEL`、`AGENT_LLM_MODEL` 顺序取值；`baseURL` 回退至 `AGENT_LLM_BASE_URL`。
 - `apiType` 支持 `chat_completions`（默认）和 `responses_api`。
 - `apiKeyEnv` 是环境变量名称，不是密钥。未指定时依次读取 `AGENT_LLM_TOKEN`、`AGENT_LLM_API_KEY`，允许无密钥。指定名称后不回退其他密钥。
-- 限制为 0 时使用上面的默认值，负数报错。模型输入按完整轮次裁剪，磁盘历史不裁剪。CLI 不自动加载 `.env`；使用进程环境或调用方自己的凭据加载方式。
-- 系统提示由基础 workspace 说明、`systemPrompt`、根目录 `AGENTS.md` 和本地 skills 元数据目录组成。不向上或递归查找其他 `AGENTS.md`；Skill 正文通过 `get_skill` 按需读取。
+- `maxHistoryRounds` 默认 10，默认作为发送给模型的完整轮数上限。添加 `"compression": {}` 可启用工具结果裁剪和旧对话摘要，启用后轮数上限作为摘要触发条件。[压缩配置](../compression/README_cn.md)
+- CLI 从进程环境读取凭据，也可由调用方自行加载。
+- 系统提示由基础 workspace 说明、`.agents/prompt.md` 原文、根目录 `AGENTS.md` 和本地 skills 元数据目录组成。不向上或递归查找其他 `AGENTS.md`；Skill 正文通过 `get_skill` 按需读取。
+- `prompt.md` 可选，缺失或为空时不追加自定义提示词，其他读取错误会导致打开失败。初始化创建空文件，不覆盖已有内容。迁移旧配置时，将 `systemPrompt` 的文本移入 `.agents/prompt.md`，并删除 JSON 中的该字段；旧字段会按未知字段报错。
 - 配置、指令与 skills 在打开时固定快照，修改后退出重开。缺失的 `mcp.json` 或 skills 目录视为空；存在但格式无效则打开失败。workspace 和内置工具配置文件必需。
 
 `tools.json` 使用 [ai-tools 的配置格式](../ai-tools/README_cn.md)。只有显式列出的、非禁用工具可见且可执行。初始化显式列出文件工具与 Shell；它们仍受确认策略控制。文件根目录和 Shell 初始目录强制绑定项目根目录；可省略或设为 `""` / `"."`，冲突配置报错。其他工具配额沿用 ai-tools 默认值。
@@ -145,7 +147,7 @@ stdio 默认工作目录是项目根目录；相对 `dir` 和包含路径分隔�
 
 ## NDJSON 与中断恢复
 
-历史唯一来源是 `.agents/state/history.ndjson`，每行一条 JSON 事件并以换行提交。例如：
+完整执行历史保存在 `.agents/state/history.ndjson`，每行一条 JSON 事件并以换行提交。例如：
 
 ~~~json
 {"version":1,"sequence":1,"time":"2026-11-04T00:00:00Z","type":"run_started","run_id":"run_example","data":{}}
@@ -156,7 +158,7 @@ stdio 默认工作目录是项目根目录；相对 `dir` 和包含路径分隔�
 
 用户消息在请求模型前同步落盘，模型消息在分发工具前落盘。批准后，实际工具执行前记录 `tool_started`，返回结果后立即同步记录。每条事件只写增量，不重写全量历史；写入或同步失败立即阻止该实例后续调用，必须退出重开。新建目录权限 `0700`、配置及状态文件 `0600`，已有文件权限不改写。
 
-重开按序号重放。无换行的末尾片段被提示并截断；中间损坏、未知版本、非法事件顺序会报错，保留原记录。首版没有自动压缩、轮转或历史大小限制。
+重开按序号重放。无换行的末尾片段被提示并截断；中间损坏、未知版本、非法事件顺序会报错，保留原记录。启用压缩后，正常结束的运行将摘要、近期上下文和日志位置保存到 `.agents/state/context-checkpoint.json`。后续请求和重开后的请求从此处继续。完整日志仍可供 `/history` 和中断恢复使用。检查点无效时，请恢复检查点或用 `/reset` 开始新对话。
 
 未完成运行通过追加错误工具结果修复调用配对：
 

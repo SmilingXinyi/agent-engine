@@ -47,7 +47,7 @@ jobs:
           go-version: '1.25.x'
           cache-dependency-path: '**/go.sum'
       - name: Test the Go workspace with the race detector
-        run: go test -race ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
+        run: go test -race ./compression/... ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
       - name: Smoke test the native CLI without model calls
         shell: bash
         run: |

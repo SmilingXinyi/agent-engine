@@ -43,9 +43,9 @@ fmt.Println(result.StopReason, result.Usage.TotalTokens, err)
 
 流程为模型调用 → 校验整批工具调用 → 顺序执行 → 追加 assistant/tool 消息 → 再次调用模型。`MaxSteps` 包含最终回答，零值使用默认 10，负值无效。工具不会由循环自动重试。
 
-`Options.MaxHistoryRounds` 控制每次模型请求保留的历史轮数，默认 `10`，`0` 使用默认值，负值无效。它与控制总执行次数的 `MaxSteps` 相互独立。超出上限时从最早一轮开始省略；所有 `system` 消息始终保留且不计入轮数。`user` / `developer` 输入与随后一次 assistant 回复及其全部 tool 结果组成一轮；没有新用户输入的连续 assistant 回复各算一轮，尚未得到回复的新输入也占一轮。多工具结果不会拆开，也不会留下裁剪造成的孤立 tool 消息。
+`Options.MaxHistoryRounds` 默认 `10`，`0` 使用默认值，负值无效。`Options.Compression` 为空时，超出上限会省略最早的完整轮次，并保留所有 system 消息。显式设置 `Options.Compression` 后，轮数上限用于触发旧轮次摘要。[压缩配置](../compression/README_cn.md)
 
-裁剪在 `Request.ModelCall` 组装本轮消息时进行，只改变发给模型及 Step Hook 的请求副本。`Result.Messages`、`Steps`、`ToolCalls` 仍保留完整执行记录。最初的用户任务也可能随旧轮次被省略；必须始终保留的规则应放在 system prompt 中。窗口按轮数而非 token 或字节计数，不保证请求体一定低于模型 API 上限。
+`Result.Messages`、`Steps` 和 `ToolCalls` 保留执行记录。启用压缩时，`Result.ContextMessages` 返回可用于续跑的上下文，`Result.Usage` 也计入生成摘要时的模型用量。
 
 | StopReason | 行为 |
 | --- | --- |

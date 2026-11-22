@@ -7,6 +7,7 @@ import (
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	compressionprot "github.com/SmilingXinyi/agent-engine/compression/protocol"
 )
 
 const FormatVersion = 1
@@ -22,14 +23,14 @@ const (
 // Config is a workspace-local override of process model settings. APIKeyEnv is
 // an environment variable name, never a credential. Zero limits use defaults.
 type Config struct {
-	Model            string `json:"model,omitempty"`
-	BaseURL          string `json:"baseURL,omitempty"`
-	APIType          string `json:"apiType,omitempty"`
-	APIKeyEnv        string `json:"apiKeyEnv,omitempty"`
-	SystemPrompt     string `json:"systemPrompt,omitempty"`
-	MaxSteps         int    `json:"maxSteps,omitempty"`
-	MaxHistoryRounds int    `json:"maxHistoryRounds,omitempty"`
-	TimeoutSeconds   int    `json:"timeoutSeconds,omitempty"`
+	Model            string                  `json:"model,omitempty"`
+	BaseURL          string                  `json:"baseURL,omitempty"`
+	APIType          string                  `json:"apiType,omitempty"`
+	APIKeyEnv        string                  `json:"apiKeyEnv,omitempty"`
+	MaxSteps         int                     `json:"maxSteps,omitempty"`
+	MaxHistoryRounds int                     `json:"maxHistoryRounds,omitempty"`
+	TimeoutSeconds   int                     `json:"timeoutSeconds,omitempty"`
+	Compression      *compressionprot.Config `json:"compression,omitempty"`
 }
 
 // OpenOptions injects execution dependencies and terminal-independent policy.

@@ -7,6 +7,7 @@
 - `ai-sdk`: 核心 AI SDK 模块。
 - `ai-tool-loop`: 顺序模型/工具循环、生命周期 Hook 和执行记录，参见[使用说明](./ai-tool-loop/README_cn.md)。
 - `ai-tools`: 可独立验证的内置文件与 Shell 工具，支持 JSON 显式启用／禁用，参见[使用说明](./ai-tools/README_cn.md)。
+- `compression`: 上下文 token 估算、长工具结果裁剪与对话摘要。[使用说明](./compression/README_cn.md)
 - `agent`: Prompt 与历史上下文组织，委托 AI Tool Loop 执行，参见[使用说明](./agent/README_cn.md)。
 - `agent-skill`: 本地 SKILL.md 解析、技能目录和按需读取工具，参见[使用说明](./agent-skill/README_cn.md)。
 - `mcp-runtime`: MCP stdio / Streamable HTTP / legacy SSE 连接、工具发现及执行适配，参见[使用说明](./mcp-runtime/README_cn.md)。
@@ -58,7 +59,7 @@ go run ./examples/remote-desktop-agent/main.go ./examples/remote-desktop-agent/o
 执行测试：
 
 ```bash
-go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
+go test ./compression/... ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
 ```
 
 ## 历史实现的取舍

@@ -24,6 +24,10 @@ func (request Request) Clone() Request {
 	request.Temperature, request.MaxOutputTokens = snapshot.Temperature, snapshot.MaxOutputTokens
 	request.Reasoning, request.OutputFormat = snapshot.Reasoning, snapshot.OutputFormat
 	request.ProviderOptions, request.Metadata = snapshot.ProviderOptions, snapshot.Metadata
+	if request.Options.Compression != nil {
+		config := request.Options.Compression.Clone()
+		request.Options.Compression = &config
+	}
 	request.Tools = slices.Clone(request.Tools)
 	for index := range request.Tools {
 		request.Tools[index].Definition = snapshot.Tools[index]
@@ -49,7 +53,10 @@ func (request Request) modelRequest(messages []aiprot.Message) aiprot.ModelReque
 // ModelCall builds one provider request. Caller metadata is copied, then the
 // execution keys overwrite any caller values with the same names.
 func (request Request) ModelCall(messages []aiprot.Message, runID, requestID string, step int) aiprot.ModelRequest {
-	modelRequest := request.modelRequest(recentRounds(messages, request.Options.MaxHistoryRounds)).Clone()
+	if request.Options.Compression == nil {
+		messages = recentRounds(messages, request.Options.MaxHistoryRounds)
+	}
+	modelRequest := request.modelRequest(messages).Clone()
 	if modelRequest.Metadata == nil {
 		modelRequest.Metadata = make(map[string]string, 3)
 	}
@@ -99,6 +106,10 @@ func (result Result) Clone() Result {
 	result.Messages = slices.Clone(result.Messages)
 	for index := range result.Messages {
 		result.Messages[index] = result.Messages[index].Clone()
+	}
+	result.ContextMessages = slices.Clone(result.ContextMessages)
+	for index := range result.ContextMessages {
+		result.ContextMessages[index] = result.ContextMessages[index].Clone()
 	}
 	result.Steps = slices.Clone(result.Steps)
 	for index := range result.Steps {

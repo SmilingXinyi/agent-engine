@@ -8,6 +8,10 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require github.com/SmilingXinyi/agent-engine/compression v0.0.0 // indirect
+
 replace github.com/SmilingXinyi/agent-engine/ai-sdk => ../ai-sdk
 
 replace github.com/SmilingXinyi/agent-engine/ai-tool-loop => ../ai-tool-loop
+
+replace github.com/SmilingXinyi/agent-engine/compression => ../compression

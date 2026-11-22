@@ -12,6 +12,8 @@ import (
 	ai "github.com/SmilingXinyi/agent-engine/ai-sdk"
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	"github.com/SmilingXinyi/agent-engine/compression"
+	compressionprot "github.com/SmilingXinyi/agent-engine/compression/protocol"
 )
 
 type Loop struct{ client *ai.Client }
@@ -43,6 +45,13 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 		return result, fmt.Errorf("invalid tool denial policy %q", request.Options.ToolDenialPolicy)
 	}
 	request = request.Clone()
+	var compressor *compression.Compressor
+	if config := request.Options.Compression; config != nil {
+		compressor, err = compression.New(*config, loop.client.Generate)
+		if err != nil {
+			return result, err
+		}
+	}
 	tools, err := prepareTools(request.Tools)
 	if err != nil {
 		return result, err
@@ -66,8 +75,15 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 	// Elements remain read-only inside the run; a separate slice keeps appends
 	// from changing the initial request observed by run hooks.
 	result.Messages = slices.Clone(request.Messages)
+	contextMessages := result.Messages
 	startedAt := time.Now()
 	defer func() {
+		if compressor != nil {
+			result.ContextMessages = slices.Clone(contextMessages)
+			for index := range result.ContextMessages {
+				result.ContextMessages[index] = result.ContextMessages[index].Clone()
+			}
+		}
 		if err != nil {
 			result.StopReason = protocol.StopError
 		}
@@ -90,7 +106,24 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		stop, stepErr := loop.step(ctx, request, tools, &result, step)
+		if compressor != nil {
+			report, compactErr := compressor.Compact(ctx, compressionprot.Request{
+				Model: request.Model, Messages: contextMessages, MaxHistoryRounds: request.Options.MaxHistoryRounds,
+				ProtectActiveTurn: true, ProviderOptions: request.ProviderOptions,
+			})
+			result.Usage.Add(report.SummaryUsage)
+			if compactErr != nil {
+				return result, compactErr
+			}
+			contextMessages = report.Messages
+		}
+		messageStart := len(result.Messages)
+		stop, stepErr := loop.step(ctx, request, contextMessages, tools, &result, step)
+		if compressor == nil {
+			contextMessages = result.Messages
+		} else if stepErr == nil && result.StopReason != protocol.StopMaxSteps {
+			contextMessages = append(contextMessages, result.Messages[messageStart:]...)
+		}
 		if stepErr != nil || stop {
 			return result, stepErr
 		}
@@ -99,12 +132,12 @@ func (loop *Loop) Run(ctx context.Context, request protocol.Request) (result pro
 	return result, nil
 }
 
-func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[string]protocol.Tool, result *protocol.Result, step int) (stop bool, err error) {
+func (loop *Loop) step(ctx context.Context, request protocol.Request, messages []aiprot.Message, tools map[string]protocol.Tool, result *protocol.Result, step int) (stop bool, err error) {
 	requestID, err := newID("req")
 	if err != nil {
 		return true, err
 	}
-	modelRequest := request.ModelCall(result.Messages, result.RunID, requestID, step)
+	modelRequest := request.ModelCall(messages, result.RunID, requestID, step)
 	index := len(result.Steps)
 	result.Steps = append(result.Steps, protocol.StepResult{Step: step, RequestID: requestID, StartedAt: time.Now()})
 	toolStart := len(result.ToolCalls)
@@ -136,7 +169,7 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 	}
 	result.LastResponse = response.Clone()
 	result.Steps[index].Response = response.Clone()
-	addUsage(&result.Usage, response.Usage)
+	result.Usage.Add(response.Usage)
 	if len(response.Message.Parts) > 0 {
 		result.Messages = append(result.Messages, response.Message.Clone())
 	}
@@ -172,15 +205,6 @@ func (loop *Loop) step(ctx context.Context, request protocol.Request, tools map[
 		}
 	}
 	return false, nil
-}
-
-func addUsage(total *aiprot.Usage, current aiprot.Usage) {
-	total.InputTokens += current.InputTokens
-	total.OutputTokens += current.OutputTokens
-	total.TotalTokens += current.TotalTokens
-	total.ReasoningTokens += current.ReasoningTokens
-	total.CacheReadTokens += current.CacheReadTokens
-	total.CacheWriteTokens += current.CacheWriteTokens
 }
 
 func withContextError(ctx context.Context, err error) error {

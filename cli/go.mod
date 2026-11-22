@@ -17,6 +17,7 @@ require (
 	github.com/SmilingXinyi/agent-engine/agent v0.0.0 // indirect
 	github.com/SmilingXinyi/agent-engine/agent-skill v0.0.0 // indirect
 	github.com/SmilingXinyi/agent-engine/ai-tools v0.0.0 // indirect
+	github.com/SmilingXinyi/agent-engine/compression v0.0.0 // indirect
 	github.com/SmilingXinyi/agent-engine/mcp-runtime v0.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -61,6 +62,8 @@ replace github.com/SmilingXinyi/agent-engine/ai-sdk => ../ai-sdk
 replace github.com/SmilingXinyi/agent-engine/ai-tool-loop => ../ai-tool-loop
 
 replace github.com/SmilingXinyi/agent-engine/ai-tools => ../ai-tools
+
+replace github.com/SmilingXinyi/agent-engine/compression => ../compression
 
 replace github.com/SmilingXinyi/agent-engine/mcp-runtime => ../mcp-runtime
 

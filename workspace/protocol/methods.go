@@ -51,6 +51,9 @@ func (config Config) Validate() error {
 	if strings.ContainsAny(config.APIKeyEnv, "=\x00") {
 		return fmt.Errorf("invalid API key environment variable name")
 	}
+	if config.Compression != nil {
+		return config.Compression.Validate()
+	}
 	return nil
 }
 

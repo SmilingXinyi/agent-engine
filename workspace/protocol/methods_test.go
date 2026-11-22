@@ -20,7 +20,7 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 		t.Fatal(explicit)
 	}
 	path := filepath.Join(t.TempDir(), "workspace.json")
-	for _, content := range []string{"null", "[]", "{\"unknown\":true}", "{\"maxSteps\":-1}", "{\"timeoutSeconds\":9223372036854775807}", "{\"apiType\":\"invalid\"}", "{\"apiKeyEnv\":\"A=B\"}", "{} {}"} {
+	for _, content := range []string{`{"systemPrompt":"legacy prompt"}`, "null", "[]", "{\"unknown\":true}", "{\"maxSteps\":-1}", "{\"timeoutSeconds\":9223372036854775807}", "{\"apiType\":\"invalid\"}", "{\"apiKeyEnv\":\"A=B\"}", "{} {}"} {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}

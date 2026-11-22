@@ -9,6 +9,7 @@ The [CLI module](../cli/README.md) owns command dispatch, inline editing, approv
 ~~~text
 .agents/
   workspace.json
+  prompt.md
   tools.json
   mcp.json
   skills/<name>/SKILL.md
@@ -25,7 +26,6 @@ All fields in `workspace.json` are optional:
   "baseURL": "https://your-provider.example/v1",
   "apiType": "chat_completions",
   "apiKeyEnv": "PROJECT_API_KEY",
-  "systemPrompt": "Follow project conventions.",
   "maxSteps": 40,
   "maxHistoryRounds": 10,
   "timeoutSeconds": 900
@@ -34,7 +34,11 @@ All fields in `workspace.json` are optional:
 
 Model fallback is `AGENT_MODEL`, then `AGENT_LLM_MODEL`; base URL falls back to `AGENT_LLM_BASE_URL`. API type is `chat_completions` by default, or `responses_api`. `apiKeyEnv` names an environment variable; absent that setting, read `AGENT_LLM_TOKEN` then `AGENT_LLM_API_KEY`. Authentication is optional. No `.env` file is automatically loaded. Zero limits use the defaults shown above; negative limits are invalid.
 
-System context includes the workspace description, configured prompt, root `AGENTS.md` and skill metadata. Skill bodies are fetched through `get_skill`. Nothing is inherited from other projects. Configuration is a fixed snapshot until reopening. Missing MCP/skills are empty; malformed files fail startup. Workspace and tools configuration files are required.
+By default, `maxHistoryRounds` limits the number of complete rounds sent to the model. Add `"compression": {}` to opt into trimming long tool results and summarizing older rounds when the limit is exceeded. Set `compression.contextWindow` to also trigger summaries by token occupancy. [Compression configuration](../compression/README_cn.md)
+
+System context includes, in order, the workspace description, the verbatim contents of `.agents/prompt.md`, root `AGENTS.md` and skill metadata. Skill bodies are fetched through `get_skill`. Nothing is inherited from other projects. Configuration, prompt, project instructions and skills are fixed snapshots until reopening. Missing MCP/skills are empty; malformed files fail startup. Workspace and tools configuration files are required.
+
+`prompt.md` is optional: missing or empty files add no custom prompt; other read errors fail startup. Initialization creates an empty file without overwriting existing contents. To migrate, move the text from `workspace.json.systemPrompt` into `.agents/prompt.md` and remove the JSON field. The old field is rejected as unknown.
 
 `tools.json` uses the [existing built-in configuration](../ai-tools/README_cn.md). Only listed, enabled tools are available. Initialization explicitly lists file tools and Shell. File root and initial Shell directory must match the project root; empty settings or `"."` bind to that root. Disabled tools do not validate dependencies.
 
@@ -46,11 +50,11 @@ File tools enforce their existing root boundary. Shell and MCP retain the proces
 
 ## Durable NDJSON history
 
-`.agents/state/history.ndjson` is the sole source of history. Every newline-terminated JSON event has `version`, increasing `sequence`, `time`, `type`, optional `run_id` and `data`. Types are `run_started`, `user_message`, `model_message`, `tool_started`, `tool_result`, `run_ended` and `context_reset`. SDK messages, raw tool arguments and large JSON extension numbers are preserved.
+`.agents/state/history.ndjson` is the source of the full execution history. Every newline-terminated JSON event has `version`, increasing `sequence`, `time`, `type`, optional `run_id` and `data`. Types are `run_started`, `user_message`, `model_message`, `tool_started`, `tool_result`, `run_ended` and `context_reset`. SDK messages, raw tool arguments and large JSON extension numbers are preserved.
 
 User input is synced before model calls; model responses before dispatch; tool starts after approval and before execution; results immediately after return. Each event appends only new data. Write or sync failure prevents further calls until reopening. Model configuration, authentication headers and credentials are not serialized; user/model text and tool output are stored as supplied.
 
-Replay truncates an uncommitted final fragment without a newline and reports the repair. Corrupt interior records, unknown versions or invalid ordering fail without overwriting history. No compaction, rotation, or size limit is implemented.
+Replay truncates an uncommitted final fragment without a newline and reports the repair. Corrupt interior records, unknown versions or invalid ordering fail without overwriting history. When compression is enabled, `.agents/state/context-checkpoint.json` saves the summary, recent context and journal position after a completed run. Later requests, including after reopening, use the checkpoint and newer messages. The journal remains available for `/history` and recovery. If the checkpoint is invalid, restore it or use `/reset` to start a fresh conversation.
 
 Interrupted batches are completed with error results: calls without an execution-start record are marked unexecuted; started calls without a recorded result are marked unknown and require verification before retrying. Completed results are retained. Recovery never replays tools or calls the model. Cancellation, model limits and execution errors also leave a valid paired history. External effects and history are not one transaction; there is no exactly-once guarantee or rollback on reset.
 

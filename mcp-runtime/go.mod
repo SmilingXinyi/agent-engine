@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/SmilingXinyi/agent-engine/compression v0.0.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
@@ -25,3 +26,5 @@ replace github.com/SmilingXinyi/agent-engine/agent => ../agent
 replace github.com/SmilingXinyi/agent-engine/ai-sdk => ../ai-sdk
 
 replace github.com/SmilingXinyi/agent-engine/ai-tool-loop => ../ai-tool-loop
+
+replace github.com/SmilingXinyi/agent-engine/compression => ../compression
