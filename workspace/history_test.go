@@ -212,7 +212,7 @@ func TestCrashAfterCompletedToolHelper(t *testing.T) {
 
 func TestProcessCrashPreservesCompletedResult(t *testing.T) {
 	root := newProject(t)
-	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte("{\"builtinTools\":{\"write_file\":{}}}"))
+	writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte("{\"builtinTools\":{\"write_file\":{}}}"))
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

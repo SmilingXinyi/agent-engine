@@ -64,9 +64,9 @@ func newProject(t *testing.T) string {
 	if err := Init(root); err != nil {
 		t.Fatal(err)
 	}
-	writeJSON(t, filepath.Join(root, ".agents/workspace.json"), protocol.Config{Model: "test-model"})
+	writeJSON(t, filepath.Join(root, ".agents/workspace.yaml"), protocol.Config{Model: "test-model"})
 	// Most tests need no executable dependency.
-	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte("{\"builtinTools\":{}}"))
+	writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte("{\"builtinTools\":{}}"))
 	return root
 }
 func openTest(t *testing.T, root string, options protocol.OpenOptions) *Workspace {
@@ -111,11 +111,11 @@ func events(t *testing.T, root string) []protocol.Event {
 func TestWorkspaceCompactsModelContextAndKeepsFullJournal(t *testing.T) {
 	root := newProject(t)
 	keep := 1
-	writeJSON(t, filepath.Join(root, ".agents/workspace.json"), protocol.Config{
+	writeJSON(t, filepath.Join(root, ".agents/workspace.yaml"), protocol.Config{
 		Model: "test-model", MaxHistoryRounds: 2,
 		Compression: &compressionprot.Config{KeepRecentRounds: &keep, MaxRecentRounds: 1, ToolResultTokens: 48},
 	})
-	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte(`{"builtinTools":{"read_file":{}}}`))
+	writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte(`{"builtinTools":{"read_file":{}}}`))
 	payload := strings.Repeat("payload-0123456789\n", 250)
 	writeFile(t, filepath.Join(root, "fixture.txt"), []byte(payload))
 
@@ -333,7 +333,7 @@ func TestFileToolApprovalAndExclusion(t *testing.T) {
 			if strings.Contains(mode, "read") {
 				tool, arguments = "read_file", json.RawMessage("{\"path\":\"note\"}")
 			}
-			writeJSON(t, filepath.Join(root, ".agents/tools.json"), map[string]any{"builtinTools": map[string]any{tool: map[string]bool{"disabled": mode == "disabled"}}})
+			writeJSON(t, filepath.Join(root, ".agents/tools.yaml"), map[string]any{"builtinTools": map[string]any{tool: map[string]bool{"disabled": mode == "disabled"}}})
 			approvals, requests := 0, 0
 			options := protocol.OpenOptions{ConfirmTool: func(context.Context, loopprot.ToolConfirmationInfo) (loopprot.ToolConfirmationDecision, error) {
 				approvals++
@@ -398,12 +398,12 @@ func TestStoppedBatchIsCompletedWithoutReplay(t *testing.T) {
 	for _, mode := range []string{"max-steps", "cancel", "confirmation-error", "hook-error", "model-error", "malformed-model"} {
 		t.Run(mode, func(t *testing.T) {
 			root := newProject(t)
-			writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte("{\"builtinTools\":{\"write_file\":{}}}"))
+			writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte("{\"builtinTools\":{\"write_file\":{}}}"))
 			config := protocol.Config{Model: "test"}
 			if mode == "max-steps" {
 				config.MaxSteps = 1
 			}
-			writeJSON(t, filepath.Join(root, ".agents/workspace.json"), config)
+			writeJSON(t, filepath.Join(root, ".agents/workspace.yaml"), config)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			options := protocol.OpenOptions{Provider: fakeProvider(func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
@@ -499,7 +499,7 @@ func TestCancellationCloseAndConcurrentOperations(t *testing.T) {
 
 func TestPersistenceFailureStopsInstanceBeforeTool(t *testing.T) {
 	root := newProject(t)
-	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte("{\"builtinTools\":{\"write_file\":{}}}"))
+	writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte("{\"builtinTools\":{\"write_file\":{}}}"))
 	var instance *Workspace
 	requests := 0
 	instance = openTest(t, root, protocol.OpenOptions{Approval: protocol.ApprovalAuto, Provider: fakeProvider(func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
@@ -532,7 +532,7 @@ func TestPersistenceFailureStopsInstanceBeforeTool(t *testing.T) {
 
 func TestFailedResultPersistenceRecoversAsUnknown(t *testing.T) {
 	root := newProject(t)
-	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte("{\"builtinTools\":{\"write_file\":{}}}"))
+	writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte("{\"builtinTools\":{\"write_file\":{}}}"))
 	instance := openTest(t, root, protocol.OpenOptions{Approval: protocol.ApprovalAuto, Provider: fakeProvider(func(context.Context, aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		return calls(
 			aiprot.ToolCall{ID: "first", Name: "write_file", Arguments: json.RawMessage("{\"path\":\"first\",\"content\":\"effect\"}")},
@@ -574,7 +574,7 @@ func TestFailedResultPersistenceRecoversAsUnknown(t *testing.T) {
 
 func TestWorkspaceTimeout(t *testing.T) {
 	root := newProject(t)
-	writeJSON(t, filepath.Join(root, ".agents/workspace.json"), protocol.Config{Model: "test", TimeoutSeconds: 1})
+	writeJSON(t, filepath.Join(root, ".agents/workspace.yaml"), protocol.Config{Model: "test", TimeoutSeconds: 1})
 	instance := openTest(t, root, protocol.OpenOptions{Provider: fakeProvider(func(ctx context.Context, _ aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		<-ctx.Done()
 		return aiprot.ModelResponse{}, ctx.Err()
@@ -595,7 +595,7 @@ func TestConfigBoundariesAndInitPreservesFiles(t *testing.T) {
 		t.Fatalf("initial prompt=%q, err=%v", prompt, err)
 	}
 	writeFile(t, promptPath, []byte("# Custom prompt\n"))
-	configPath := filepath.Join(root, ".agents/workspace.json")
+	configPath := filepath.Join(root, ".agents/workspace.yaml")
 	before, _ := os.ReadFile(configPath)
 	if err := Init(root); err != nil {
 		t.Fatal(err)
@@ -613,20 +613,20 @@ func TestConfigBoundariesAndInitPreservesFiles(t *testing.T) {
 		"{\"builtinTools\":{\"shell\":{}},\"shell\":{\"dir\":\"..\"}}",
 		"{\"builtinTools\":{\"typo\":{}}}",
 	} {
-		writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte(config))
+		writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte(config))
 		if _, err := Open(t.Context(), root, protocol.OpenOptions{Provider: fakeProvider(nil)}); err == nil {
 			t.Fatal("invalid configuration accepted")
 		}
 	}
-	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte("{\"builtinTools\":{\"shell\":{\"disabled\":true}},\"shell\":{\"dir\":\"/does-not-exist\"}}"))
-	if err := os.Remove(filepath.Join(root, ".agents/mcp.json")); err != nil {
+	writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte("{\"builtinTools\":{\"shell\":{\"disabled\":true}},\"shell\":{\"dir\":\"/does-not-exist\"}}"))
+	if err := os.Remove(filepath.Join(root, ".agents/mcp.yaml")); err != nil {
 		t.Fatal(err)
 	}
 	instance := openTest(t, root, protocol.OpenOptions{})
 	if err := instance.Close(); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(root, ".agents/mcp.json"), []byte("{invalid"))
+	writeFile(t, filepath.Join(root, ".agents/mcp.yaml"), []byte("{invalid"))
 	if _, err := Open(t.Context(), root, protocol.OpenOptions{Provider: fakeProvider(nil)}); err == nil {
 		t.Fatal("invalid MCP accepted")
 	}
@@ -714,7 +714,7 @@ func TestMCPApprovalProvenanceDirectoryAndCleanup(t *testing.T) {
 			marker := filepath.Join(root, "mcp")
 			// MCP can produce a name equal to a built-in that is not enabled.
 			// It must still require confirmation.
-			writeJSON(t, filepath.Join(root, ".agents/mcp.json"), mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{"read": mcpServer(t, marker, "file")}})
+			writeJSON(t, filepath.Join(root, ".agents/mcp.yaml"), mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{"read": mcpServer(t, marker, "file")}})
 			confirmations, requests := 0, 0
 			instance := openTest(t, root, protocol.OpenOptions{ConfirmTool: func(context.Context, loopprot.ToolConfirmationInfo) (loopprot.ToolConfirmationDecision, error) {
 				confirmations++
@@ -752,7 +752,7 @@ func TestMCPApprovalProvenanceDirectoryAndCleanup(t *testing.T) {
 	}
 	root := newProject(t)
 	marker := filepath.Join(root, "startup")
-	writeJSON(t, filepath.Join(root, ".agents/mcp.json"), mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
+	writeJSON(t, filepath.Join(root, ".agents/mcp.yaml"), mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
 		"a": mcpServer(t, marker, ""), "b": {Command: "/nonexistent/workspace-mcp"},
 	}})
 	if _, err := Open(t.Context(), root, protocol.OpenOptions{Provider: fakeProvider(nil)}); err == nil {
@@ -761,7 +761,7 @@ func TestMCPApprovalProvenanceDirectoryAndCleanup(t *testing.T) {
 	if _, err := os.Stat(marker + ".closed"); err != nil {
 		t.Fatal("earlier MCP resource leaked", err)
 	}
-	writeFile(t, filepath.Join(root, ".agents/mcp.json"), []byte("{\"mcpServers\":{}}"))
+	writeFile(t, filepath.Join(root, ".agents/mcp.yaml"), []byte("{\"mcpServers\":{}}"))
 	_ = openTest(t, root, protocol.OpenOptions{}) // failed open released the lock
 }
 
@@ -770,7 +770,7 @@ func TestShellDirectoryAndCancellation(t *testing.T) {
 		t.Skip("sh is required")
 	}
 	root := newProject(t)
-	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte("{\"builtinTools\":{\"shell\":{}}}"))
+	writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte("{\"builtinTools\":{\"shell\":{}}}"))
 	requests := 0
 	instance := openTest(t, root, protocol.OpenOptions{Approval: protocol.ApprovalAuto, Provider: fakeProvider(func(_ context.Context, request aiprot.ModelRequest) (aiprot.ModelResponse, error) {
 		requests++

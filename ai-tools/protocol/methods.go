@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/SmilingXinyi/agent-engine/ai-tools/utils"
 )
@@ -66,7 +68,7 @@ func (setting *ToolConfig) UnmarshalJSON(content []byte) error {
 func (config Config) Validate() error {
 	for name := range config.BuiltinTools {
 		switch name {
-		case ReadFile, WriteFile, ApplyPatch, ListDirectory, Shell:
+		case ReadFile, WriteFile, ApplyPatch, ListDirectory, Shell, AskUser:
 		default:
 			return fmt.Errorf("unknown built-in tool %q", name)
 		}
@@ -84,4 +86,21 @@ func (config Config) EnabledNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func (question UserQuestion) Validate() error {
+	if strings.TrimSpace(question.Question) == "" || utf8.RuneCountInString(question.Question) > 1000 {
+		return fmt.Errorf("question must contain 1 to 1000 characters")
+	}
+	if question.Choices != nil && (len(question.Choices) < 2 || len(question.Choices) > 8) {
+		return fmt.Errorf("provide two to eight choices or omit them")
+	}
+	seen := make(map[string]bool, len(question.Choices))
+	for _, choice := range question.Choices {
+		if strings.TrimSpace(choice) == "" || utf8.RuneCountInString(choice) > 160 || seen[choice] {
+			return fmt.Errorf("choices must be distinct and contain 1 to 160 characters")
+		}
+		seen[choice] = true
+	}
+	return nil
 }

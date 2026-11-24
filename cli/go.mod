@@ -5,6 +5,8 @@ go 1.25.0
 require (
 	github.com/SmilingXinyi/agent-engine/ai-sdk v0.7.0
 	github.com/SmilingXinyi/agent-engine/ai-tool-loop v0.1.0
+	github.com/SmilingXinyi/agent-engine/ai-tools v0.0.0
+	github.com/SmilingXinyi/agent-engine/compression v0.0.0
 	github.com/SmilingXinyi/agent-engine/workspace v0.0.0
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -16,8 +18,6 @@ require (
 require (
 	github.com/SmilingXinyi/agent-engine/agent v0.0.0 // indirect
 	github.com/SmilingXinyi/agent-engine/agent-skill v0.0.0 // indirect
-	github.com/SmilingXinyi/agent-engine/ai-tools v0.0.0 // indirect
-	github.com/SmilingXinyi/agent-engine/compression v0.0.0 // indirect
 	github.com/SmilingXinyi/agent-engine/mcp-runtime v0.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

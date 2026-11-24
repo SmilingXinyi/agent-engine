@@ -1,70 +1,51 @@
-# Agent Engine 工作区
+# Agent Engine
 
-本项目基于 Go 1.25 的 `go.work` 多模块工作区方案重构。
+[English](./README.md)
 
-## 模块结构
-
-- `ai-sdk`: 核心 AI SDK 模块。
-- `ai-tool-loop`: 顺序模型/工具循环、生命周期 Hook 和执行记录，参见[使用说明](./ai-tool-loop/README_cn.md)。
-- `ai-tools`: 可独立验证的内置文件与 Shell 工具，支持 JSON 显式启用／禁用，参见[使用说明](./ai-tools/README_cn.md)。
-- `compression`: 上下文 token 估算、长工具结果裁剪与对话摘要。[使用说明](./compression/README_cn.md)
-- `agent`: Prompt 与历史上下文组织，委托 AI Tool Loop 执行，参见[使用说明](./agent/README_cn.md)。
-- `agent-skill`: 本地 SKILL.md 解析、技能目录和按需读取工具，参见[使用说明](./agent-skill/README_cn.md)。
-- `mcp-runtime`: MCP stdio / Streamable HTTP / legacy SSE 连接、工具发现及执行适配，参见[使用说明](./mcp-runtime/README_cn.md)。
-- `workspace`: 终端无关的项目运行环境、MCP / skills 和 NDJSON 持久化上下文，参见[使用说明](./workspace/README_cn.md)。
-- `cli`: 命令入口、终端交互与 workspace 会话生命周期，参见[使用说明](./cli/README_cn.md)。
-
-## 开发规范
-
-详细代码风格与命名约定规范请参考 [AGENTS.md](./AGENTS.md)。
+在 macOS 或 Linux 的终端里，用自己的模型处理本地项目。Agent Engine 会为每个项目保存独立的配置和对话，支持文件工具、Shell、Skills 和 MCP。
 
 ## 快速开始
 
-### 前置要求
+安装 CLI，默认位置为 `~/.local/bin`。稳定版 Release 需包含 `install.sh`。 [GitHub Releases](https://github.com/SmilingXinyi/agent-engine/releases)
 
-- Go 1.25.0 或更高版本
-
-### 工作区管理
-
-同步工作区依赖：
-
-```bash
-go work sync
+```sh
+curl -fsSL https://github.com/SmilingXinyi/agent-engine/releases/latest/download/install.sh | sh
 ```
 
-### 本机项目 Workspace
+进入一个已有的项目目录。将示例中的模型名和 API 地址换成你的配置。
 
-在 macOS 或 Linux 上，为已有项目目录初始化配置并开始持续对话：
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+cd /path/to/project
 
-```bash
-go run ./cli/cmd/agent-engine init /path/to/project
+agent-engine init
 export AGENT_LLM_MODEL='your-model'
 export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
-export AGENT_LLM_API_KEY='your-key'
-go run ./cli/cmd/agent-engine chat /path/to/project
+# 接口需要认证时设置 AGENT_LLM_API_KEY
+
+agent-engine chat
 ```
 
-每个项目独立保存配置和 `.agents/state/history.ndjson`，重新打开继续同一份上下文。写入、Shell 和 MCP 调用默认逐次确认。
+想根据项目生成配置，可以在对话前运行 `agent-engine configure`，预览并确认建议。重新打开时用 `agent-engine -c` 回显历史并继续对话。写文件、打补丁、Shell 和 MCP 调用默认逐次确认。 [CLI 使用手册](./cli/README_cn.md)
 
-### 远程桌面 Agent 示例
+## 架构
 
-```bash
-go run ./examples/remote-desktop-agent/main.go ./examples/remote-desktop-agent/ocr-tool.go -task "查看远程桌面当前打开的应用，并告诉我结果"
-```
+`cli → workspace → agent → ai-tool-loop → ai-sdk`。Workspace 管理配置、资源和会话历史，Agent 负责组装上下文，工具执行由同一套循环处理。
 
-配置与参数参见 [examples 使用说明](./examples/README_cn.md)。
+| 模块 | 职责 |
+| --- | --- |
+| [cli](./cli/README_cn.md) | 命令、终端输入输出和审批 |
+| [workspace](./workspace/README_cn.md) | 项目配置、MCP 和 Skills 装配、NDJSON 历史 |
+| [agent](./agent/README_cn.md) | 组装 Prompt 和对话上下文 |
+| [ai-tool-loop](./ai-tool-loop/README_cn.md) | 驱动模型与工具循环，记录执行过程 |
+| [ai-sdk](./ai-sdk/README_cn.md) | 模型请求、流式响应和供应商接口 |
+| [ai-tools](./ai-tools/README_cn.md) | 文件、Shell、用户提问及子代理工具 |
+| [agent-skill](./agent-skill/README_cn.md) | 加载本地 Skills，按需提供指令 |
+| [mcp-runtime](./mcp-runtime/README_cn.md) | MCP 连接、工具发现与调用 |
+| [compression](./compression/README_cn.md) | 上下文估算、工具结果裁剪和历史摘要 |
 
-### 运行测试
-
-执行测试：
-
-```bash
-go test ./compression/... ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
-```
-
-## 历史实现的取舍
-
-`out/` 是历史参考代码。新框架保持单向依赖：`agent → ai-tool-loop → ai-sdk`，`ai-tools`、`agent-skill` 与 `mcp-runtime` 提供 loop 工具，由调用方组装。Agent 不加载目录、连接 MCP、创建 Provider 或保存会话。
+<details>
+<summary>历史实现的取舍</summary>
 
 | 历史能力 | 当前处理 | 原因 |
 | --- | --- | --- |
@@ -83,10 +64,28 @@ go test ./compression/... ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-l
 
 MCP 图片等非文本结果目前仍序列化为 JSON 文本。这与旧实现相同，不是视觉输入适配；截图体积和上下文预算应在明确模型格式后单独处理。不能仅按消息数量切片来解决 token 成本。
 
+</details>
+
+## 开发与发布
+
+使用 Go 1.25.0 或更新版本。从仓库根目录构建 CLI，或运行全工作区测试。更新模块依赖后可用 `go work sync` 同步。 [开发规范](./AGENTS.md)
+
+```sh
+go build -o /tmp/agent-engine ./cli/cmd/agent-engine
+
+go test ./compression/... ./agent/... ./agent-skill/... ./ai-sdk/... \
+  ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
+```
+
+远程桌面 Agent 示例使用项目的工具循环，通过任务提示检查远程桌面。 [示例与配置](./examples/README_cn.md)
+
+```sh
+go run ./examples/remote-desktop-agent/main.go ./examples/remote-desktop-agent/ocr-tool.go \
+  -task "查看远程桌面当前打开的应用"
+```
+
+公开 SDK 使用 `ai-sdk/v*` 标签。推送 `cli/v*` 标签触发 CLI 二进制发布，其余模块随仓库源码构建。 [CLI 发布流程](./cli/README_cn.md#发布流程)
+
 ## 许可证
 
 MIT
-
-## 版本与发布
-
-公开 SDK 使用 `ai-sdk/v*` 标签，应用使用 `cli/v*` 标签；只有 CLI 标签触发带二进制附件的 GitHub Release。其他模块保留为内部依赖，随同一份仓库源码构建，旧 workspace、agent 和 ai-tool-loop 标签及 Releases 已清理。参见 [CLI 发布流程](./cli/README_cn.md#发布流程)。

@@ -30,8 +30,7 @@ trap 'rm -rf -- "$staging_dir"' EXIT
 cd -- "$repo_root"
 CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" GOWORK="$repo_root/go.work" \
   go build -trimpath -ldflags="-s -w" -o "$staging_dir/agent-engine" ./cli/cmd/agent-engine
-cp cli/README.md cli/README_cn.md "$staging_dir/"
 archive="agent-engine-cli_${version}_${target_os}_${target_arch}.tar.gz"
 # Avoid macOS AppleDouble metadata entries when packaging locally.
-COPYFILE_DISABLE=1 tar -czf "$output_dir/$archive" -C "$staging_dir" agent-engine README.md README_cn.md
+COPYFILE_DISABLE=1 tar -czf "$output_dir/$archive" -C "$staging_dir" agent-engine
 echo "$output_dir/$archive"

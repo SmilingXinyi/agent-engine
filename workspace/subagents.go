@@ -85,12 +85,12 @@ func loadSubagentRoles(root, model, instructions string, localTools []loopprot.T
 }
 
 func loadSubagentRole(directory, model, root, instructions string, available map[string]loopprot.Tool) (subagentRole, error) {
-	path := filepath.Join(directory, "workspace.json")
+	path := filepath.Join(directory, workspaceConfigName)
 	var config struct {
 		Description string `json:"description"`
 		Model       string `json:"model"`
 	}
-	if err := loadRoleJSON(path, &config); err != nil {
+	if err := loadRoleConfig(path, &config); err != nil {
 		return subagentRole{}, err
 	}
 	description := strings.TrimSpace(config.Description)
@@ -100,11 +100,11 @@ func loadSubagentRole(directory, model, root, instructions string, available map
 	if override := strings.TrimSpace(config.Model); override != "" {
 		model = override
 	}
-	path = filepath.Join(directory, "tools.json")
+	path = filepath.Join(directory, toolsConfigName)
 	var selection struct {
 		BuiltinTools map[string]toolsprot.ToolConfig `json:"builtinTools"`
 	}
-	if err := loadRoleJSON(path, &selection); err != nil {
+	if err := loadRoleConfig(path, &selection); err != nil {
 		return subagentRole{}, err
 	}
 	toolConfig := toolsprot.Config{BuiltinTools: selection.BuiltinTools}
@@ -147,15 +147,12 @@ func loadSubagentRole(directory, model, root, instructions string, available map
 	}, nil
 }
 
-func loadRoleJSON(path string, target any) error {
-	if err := regularOrMissing(path); err != nil {
-		return err
-	}
-	content, err := os.ReadFile(path)
+func loadRoleConfig(path string, target any) error {
+	content, err := protocol.ReadYAMLConfig(path)
 	if err != nil {
 		return err
 	}
-	if err := protocol.DecodeJSON(content, target); err != nil {
+	if err := protocol.DecodeYAML(content, target); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil

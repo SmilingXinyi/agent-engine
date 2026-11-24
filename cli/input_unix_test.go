@@ -275,7 +275,7 @@ func TestTTYChatPreservesMultilineThroughAgentAndReopen(t *testing.T) {
 	go func() { finished <- chat(t.Context(), root, options, slave, &lockedWriter{writer: slave}, nil) }()
 	transcript.wait(t, "> ")
 	typeKeys(t, master, "/a/project/file\x0aplease inspect\r")
-	transcript.wait(t, "[run] stop=natural")
+	transcript.wait(t, "[run] model reply ended")
 	// Wait for the next editor to enter raw mode before sending /exit.
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()

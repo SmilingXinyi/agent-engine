@@ -3,6 +3,7 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -18,7 +19,10 @@ func acquireLock(path string) (*os.File, error) {
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("workspace is already open or cannot be locked: %w", err)
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("workspace is already open; close the other session and try again: %w", err)
+		}
+		return nil, fmt.Errorf("acquire file lock: %w", err)
 	}
 	return file, nil
 }

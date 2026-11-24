@@ -11,6 +11,7 @@
 | `filesystem` | `apply_patch` | `path`、`patch` | JSON：`path`、`hunks_applied`、`bytes_written` |
 | `filesystem` | `list_directory` | `path` | JSON 数组：每项包含 `name`、`type`，按名称排序 |
 | `shell` | `shell` | `command` | JSON：`stdout`、`stderr`、`exit_code`、`truncated` |
+| `interaction` | `ask_user` | `question`、可选 `choices` | 用户回答 |
 
 所有输入必须为单个 JSON object；未知字段、缺少必填参数和错误参数类型会返回错误。
 
@@ -50,6 +51,10 @@
 默认超时 30 秒，与调用方 context 的截止时间取较早者。stdout、stderr 各保留最多 64 KiB，超过后继续排空输出并设置 `truncated`。非零退出码保留两个输出流，同时设置 `ToolResult.IsError`；启动失败、取消和超时返回 Go error。Unix 取消时终止进程组中的普通子进程；其他平台使用 `exec.CommandContext` 的直接进程终止机制。主动脱离进程组的进程不由该机制管理。
 
 Shell 的 `Dir` 是初始工作目录，并不限制命令的文件访问范围；文件工具的 Root 约束也不会应用到 Shell。调用方通过工具选择和现有 `ConfirmTool` 实施执行策略。
+
+### 提问工具
+
+启用 `ask_user` 时通过 `BuildWithDependencies` 注入 `protocol.Dependencies.AskUser`，或直接使用 `interaction.NewAskUserTool`。调用方负责呈现问题并遵守 context 取消。禁用工具时无需提供回调。
 
 ### 子 Agent 工具
 

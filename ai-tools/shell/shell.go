@@ -72,12 +72,12 @@ func NewTool(options protocol.ShellOptions) (loopprot.Tool, error) {
 			if strings.TrimSpace(input.Command) == "" {
 				return aiprot.ToolResult{}, fmt.Errorf("command is required")
 			}
-			ctx, cancel := context.WithTimeout(ctx, time.Duration(options.TimeoutSeconds)*time.Second)
-			defer cancel()
 			if err := ctx.Err(); err != nil {
-				return aiprot.ToolResult{}, err
+				return aiprot.ToolResult{}, fmt.Errorf("shell stopped by parent execution: %w", err)
 			}
-			command := exec.CommandContext(ctx, executable, "-c", input.Command)
+			commandContext, cancel := context.WithTimeout(ctx, time.Duration(options.TimeoutSeconds)*time.Second)
+			defer cancel()
+			command := exec.CommandContext(commandContext, executable, "-c", input.Command)
 			command.Dir = directory
 			command.WaitDelay = time.Second
 			configureProcess(command)
@@ -85,8 +85,11 @@ func NewTool(options protocol.ShellOptions) (loopprot.Tool, error) {
 			stderr := &limitedBuffer{limit: options.MaxOutputBytes}
 			command.Stdout, command.Stderr = stdout, stderr
 			runErr := command.Run()
-			if err := ctx.Err(); err != nil {
-				return aiprot.ToolResult{}, err
+			if err := commandContext.Err(); err != nil {
+				if parentErr := ctx.Err(); parentErr != nil {
+					return aiprot.ToolResult{}, fmt.Errorf("shell stopped by parent execution: %w", parentErr)
+				}
+				return aiprot.ToolResult{}, fmt.Errorf("shell exceeded its %ds timeout: %w", options.TimeoutSeconds, err)
 			}
 			exitCode := 0
 			if runErr != nil {

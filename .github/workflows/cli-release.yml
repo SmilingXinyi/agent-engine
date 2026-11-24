@@ -48,16 +48,19 @@ jobs:
           cache-dependency-path: '**/go.sum'
       - name: Test the Go workspace with the race detector
         run: go test -race ./compression/... ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
+      - name: Test checksum verification and atomic installation
+        run: sh cli/scripts/install_test.sh
       - name: Smoke test the native CLI without model calls
         shell: bash
         run: |
           set -euo pipefail
           go build -o "$RUNNER_TEMP/agent-engine" ./cli/cmd/agent-engine
           mkdir -p "$RUNNER_TEMP/smoke-project"
+          "$RUNNER_TEMP/agent-engine" help
           "$RUNNER_TEMP/agent-engine" init "$RUNNER_TEMP/smoke-project"
           printf '/help\n/history\n/exit\n' |
             AGENT_MODEL=smoke-test AGENT_LLM_BASE_URL=http://127.0.0.1:1/v1 \
-            "$RUNNER_TEMP/agent-engine" chat "$RUNNER_TEMP/smoke-project"
+            "$RUNNER_TEMP/agent-engine" -c "$RUNNER_TEMP/smoke-project"
 
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -84,7 +87,8 @@ jobs:
           TARGET_ARCH: ${{ matrix.goarch }}
         run: |
           set -euo pipefail
-          bash cli/scripts/package-release.sh "$TARGET_OS" "$TARGET_ARCH" "${RELEASE_TAG#cli/}" dist
+          archive="$(bash cli/scripts/package-release.sh "$TARGET_OS" "$TARGET_ARCH" "${RELEASE_TAG#cli/}" dist)"
+          test "$(tar -tzf "$archive")" = agent-engine
       - uses: actions/upload-artifact@v4
         with:
           name: cli-release-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -100,6 +104,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/download-artifact@v5
         with:
           pattern: cli-release-*
@@ -121,7 +128,15 @@ jobs:
           cat > "$RUNNER_TEMP/cli-release-notes.md" <<'NOTES'
           独立的单机 Agent Workspace CLI，支持 macOS / Linux 的 amd64 和 arm64 架构。
 
-          下载对应平台的压缩包并解压，无需 Go 环境；压缩包中包含 agent-engine 和中英文使用说明。SHA256SUMS 可用于校验下载文件。
+          一条命令安装到 `~/.local/bin`。
+
+          ```sh
+          curl -fsSL https://github.com/SmilingXinyi/agent-engine/releases/latest/download/install.sh | sh
+          ```
+
+          也可以下载对应平台的压缩包并解压。归档仅包含 agent-engine，可用 SHA256SUMS 校验。
+
+          [中文使用说明](https://github.com/SmilingXinyi/agent-engine/blob/main/cli/README_cn.md) · [English documentation](https://github.com/SmilingXinyi/agent-engine/blob/main/cli/README.md)
 
           初始化项目并开始对话：
 
@@ -130,6 +145,7 @@ jobs:
           export AGENT_LLM_MODEL='your-model'
           export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
           export AGENT_LLM_API_KEY='your-key'
+          ./agent-engine configure /path/to/project
           ./agent-engine chat /path/to/project
           ```
 
@@ -140,7 +156,7 @@ jobs:
               --title "Agent CLI ${RELEASE_TAG#cli/}" \
               --notes-file "$RUNNER_TEMP/cli-release-notes.md"
           fi
-          gh release upload "$RELEASE_TAG" "${archives[@]}" dist/SHA256SUMS --clobber
+          gh release upload "$RELEASE_TAG" "${archives[@]}" dist/SHA256SUMS cli/scripts/install.sh --clobber
           if [[ "$RELEASE_TAG" == *-* ]]; then
             gh release edit "$RELEASE_TAG" --draft=false --prerelease
           else

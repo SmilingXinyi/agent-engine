@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	toolsprot "github.com/SmilingXinyi/agent-engine/ai-tools/protocol"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/term"
@@ -212,7 +215,7 @@ func terminalConfirmation(input *chatInput, output io.Writer) func(context.Conte
 		if err := ctx.Err(); err != nil {
 			return loopprot.ToolConfirmationDecision{}, err
 		}
-		if _, err := fmt.Fprintf(output, "Execute %s %s?\n", info.Call.Name, info.Call.Arguments); err != nil {
+		if _, err := fmt.Fprintf(output, "Execute %s %s?\n", terminalText(info.Call.Name, 80, false), terminalText(string(info.Call.Arguments), 0, true)); err != nil {
 			return loopprot.ToolConfirmationDecision{}, err
 		}
 		text, err := input.Read(ctx, "Approve [y/N]: ", false)
@@ -222,9 +225,47 @@ func terminalConfirmation(input *chatInput, output io.Writer) func(context.Conte
 		if err := ctx.Err(); err != nil {
 			return loopprot.ToolConfirmationDecision{}, err
 		}
-		answer := strings.TrimSpace(text)
-		approved := strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes")
-		return loopprot.ToolConfirmationDecision{Approved: approved, Reason: "terminal approval decision"}, nil
+		return loopprot.ToolConfirmationDecision{Approved: affirmative(text), Reason: "terminal approval decision"}, nil
+	}
+}
+
+func affirmative(text string) bool {
+	answer := strings.TrimSpace(text)
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes")
+}
+
+func terminalQuestion(input *chatInput, output io.Writer, display *runDisplay) toolsprot.AskUserFunc {
+	return func(ctx context.Context, question toolsprot.UserQuestion) (string, error) {
+		if input.editor == nil {
+			return "", fmt.Errorf("ask_user requires an interactive terminal")
+		}
+		started := time.Now()
+		defer func() { display.userWait += time.Since(started) }()
+		if _, err := fmt.Fprintln(output, terminalText(question.Question, 1000, false)); err != nil {
+			return "", err
+		}
+		for index, choice := range question.Choices {
+			if _, err := fmt.Fprintf(output, "  %d. %s\n", index+1, terminalText(choice, 160, false)); err != nil {
+				return "", err
+			}
+		}
+		for {
+			answer, err := input.Read(ctx, "Answer: ", false)
+			if err != nil {
+				return "", err
+			}
+			answer = strings.TrimSpace(answer)
+			if len(question.Choices) == 0 && answer != "" {
+				return answer, nil
+			}
+			index, err := strconv.Atoi(answer)
+			if err == nil && index >= 1 && index <= len(question.Choices) {
+				return question.Choices[index-1], nil
+			}
+			if _, err := fmt.Fprintln(output, "Enter a nonempty answer or one of the listed numbers."); err != nil {
+				return "", err
+			}
+		}
 	}
 }
 

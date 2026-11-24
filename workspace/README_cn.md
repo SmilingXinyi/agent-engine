@@ -6,57 +6,59 @@
 
 ## 目录与配置
 
+现有项目需将 `workspace.json`、`tools.json`、`mcp.json` 转换为对应的 `.yaml` 文件。子代理配置也使用 `.yaml`。已有会话状态可以继续读取。
+
 ~~~text
 project/
   AGENTS.md
   .agents/
-    workspace.json
+    workspace.yaml
     prompt.md
-    tools.json
-    mcp.json
+    tools.yaml
+    mcp.yaml
     skills/<skill-name>/SKILL.md
     state/
       history.ndjson
       workspace.lock
 ~~~
 
-`workspace.json` 的字段全部可选：
+`workspace.yaml` 的字段全部可选。
 
-~~~json
-{
-  "model": "your-model",
-  "baseURL": "https://your-provider.example/v1",
-  "apiType": "chat_completions",
-  "apiKeyEnv": "PROJECT_API_KEY",
-  "maxSteps": 40,
-  "maxHistoryRounds": 10,
-  "timeoutSeconds": 900
-}
+~~~yaml
+model: your-model
+baseURL: https://your-provider.example/v1
+apiType: chat_completions
+apiKeyEnv: PROJECT_API_KEY
+modelMaxRetries: 2
+maxSteps: 40
+maxHistoryRounds: 10
+timeoutSeconds: 900
 ~~~
 
 - 未指定 `model` 时按 `AGENT_MODEL`、`AGENT_LLM_MODEL` 顺序取值；`baseURL` 回退至 `AGENT_LLM_BASE_URL`。
 - `apiType` 支持 `chat_completions`（默认）和 `responses_api`。
 - `apiKeyEnv` 是环境变量名称，不是密钥。未指定时依次读取 `AGENT_LLM_TOKEN`、`AGENT_LLM_API_KEY`，允许无密钥。指定名称后不回退其他密钥。
-- `maxHistoryRounds` 默认 10，默认作为发送给模型的完整轮数上限。添加 `"compression": {}` 可启用工具结果裁剪和旧对话摘要，启用后轮数上限作为摘要触发条件。[压缩配置](../compression/README_cn.md)
+- `modelMaxRetries` 控制暂时性模型请求失败后的追加尝试次数，默认 2 次，设为 0 关闭重试。
+- `reasoningEffort` 设置模型支持的推理强度，`providerOptions` 可传供应商原生字段。
+- `maxHistoryRounds` 默认 10，默认作为发送给模型的完整轮数上限。添加 `compression: {}` 可启用工具结果裁剪和旧对话摘要，启用后轮数上限作为摘要触发条件。[压缩配置](../compression/README_cn.md)
 - CLI 从进程环境读取凭据，也可由调用方自行加载。
 - 系统提示由基础 workspace 说明、`.agents/prompt.md` 原文、根目录 `AGENTS.md` 和本地 skills 元数据目录组成。不向上或递归查找其他 `AGENTS.md`；Skill 正文通过 `get_skill` 按需读取。
-- `prompt.md` 可选，缺失或为空时不追加自定义提示词，其他读取错误会导致打开失败。初始化创建空文件，不覆盖已有内容。迁移旧配置时，将 `systemPrompt` 的文本移入 `.agents/prompt.md`，并删除 JSON 中的该字段；旧字段会按未知字段报错。
-- 配置、指令与 skills 在打开时固定快照，修改后退出重开。缺失的 `mcp.json` 或 skills 目录视为空；存在但格式无效则打开失败。workspace 和内置工具配置文件必需。
+- `prompt.md` 可选，缺失或为空时不追加自定义提示词，其他读取错误会导致打开失败。初始化创建空文件，不覆盖已有内容。迁移时把旧配置中的 `systemPrompt` 移到 `.agents/prompt.md`。
+- 配置、指令与 skills 在打开时固定快照，修改后退出重开。缺失的 `mcp.yaml` 或 skills 目录视为空；存在但格式无效则打开失败。workspace 和内置工具配置文件必需。
 
-`tools.json` 使用 [ai-tools 的配置格式](../ai-tools/README_cn.md)。只有显式列出的、非禁用工具可见且可执行。初始化显式列出文件工具与 Shell；它们仍受确认策略控制。文件根目录和 Shell 初始目录强制绑定项目根目录；可省略或设为 `""` / `"."`，冲突配置报错。其他工具配额沿用 ai-tools 默认值。
+`tools.yaml` 沿用 [ai-tools 的配置字段](../ai-tools/README_cn.md)。只有显式列出的、非禁用工具可见且可执行。初始化显式列出文件工具与 Shell；它们仍受确认策略控制。文件根目录和 Shell 初始目录强制绑定项目根目录；可省略或设为 `""` / `"."`，冲突配置报错。其他工具配额沿用 ai-tools 默认值。
 
-`mcp.json` 使用 [mcp-runtime 配置格式](../mcp-runtime/README_cn.md)：
+在 `tools.yaml` 设置 `shell.timeoutSeconds` 可调整 Shell 时限，默认 30 秒，受当前轮次剩余时间约束。在 `builtinTools` 添加 `ask_user: {}` 可让模型在交互终端向用户提问。
 
-~~~json
-{
-  "mcpServers": {
-    "local": {
-      "command": "./bin/my-mcp-server",
-      "args": [],
-      "env": { "PROJECT_MODE": "local" }
-    }
-  }
-}
+`mcp.yaml` 使用 `mcpServers` 映射，字段参见 [mcp-runtime 配置](../mcp-runtime/README_cn.md)。
+
+~~~yaml
+mcpServers:
+  local:
+    command: ./bin/my-mcp-server
+    args: []
+    env:
+      PROJECT_MODE: local
 ~~~
 
 stdio 默认工作目录是项目根目录；相对 `dir` 和包含路径分隔符的相对 `command` 按项目根目录解析，裸命令名沿用 PATH。参数由子进程按自身工作目录解释。MCP 配置与内置工具配置分开解析；打开时显式连接启用的服务器，失败时关闭已连接资源。
@@ -67,11 +69,11 @@ stdio 默认工作目录是项目根目录；相对 `dir` 和包含路径分隔�
 
 | `.agents/.subagents/repo_research/` 中的文件 | 内容示例 |
 | --- | --- |
-| `workspace.json` | `{"description":"查证仓库中的实现并提供文件和行号"}` |
+| `workspace.yaml` | `{"description":"查证仓库中的实现并提供文件和行号"}` |
 | `prompt.md` | `先定位入口和调用方，再总结发现。列出支持结论的文件和行号。` |
-| `tools.json` | `{"builtinTools":{"read_file":{},"list_directory":{}}}` |
+| `tools.yaml` | `{"builtinTools":{"read_file":{},"list_directory":{}}}` |
 
-`workspace.json` 可选填 `model`，默认沿用父 Workspace 模型。`prompt.md` 可省略，子运行会读取项目根目录 `AGENTS.md` 中的规则。`tools.json` 从父 Workspace 已启用的 `read_file` 和 `list_directory` 中至少选一个，沿用它们的项目根目录和限制。
+`workspace.yaml` 可选填 `model`，默认沿用父 Workspace 模型。`prompt.md` 可省略，子运行会读取项目根目录 `AGENTS.md` 中的规则。`tools.yaml` 从父 Workspace 已启用的 `read_file` 和 `list_directory` 中至少选一个，沿用它们的项目根目录和限制。
 
 父模型根据职责说明委派，填写任务及必要背景。每次启动新的子运行，父轮同步等待。在所有角色间每轮最多委派两次，每次最多 6 次模型调用和 60 秒。默认审批模式直接允许只读委派，全量审批模式分别确认委派和子工具调用。委派参数和最终结果随父对话保存在历史中，工具结果元数据包含子运行 ID 和用量。子模型的中间消息留在本次运行中。
 

@@ -1,155 +1,150 @@
 # Agent Engine CLI
 
-A local, single-user CLI for macOS and Linux. Each project owns independent model settings, MCP servers, skills, and one durable conversation. This module composes the existing Agent and tool loop.
+[简体中文](./README_cn.md) · [Project home](../README.md)
 
-The `cli` module owns commands, terminal input/output and the workspace session lifecycle. The [workspace module](../workspace/README.md) remains terminal-independent. `cmd/agent-engine` only wires process signals, standard streams and exit codes.
+Configure a model and tools for each project, then pick up conversations from your terminal. The CLI supports macOS and Linux on amd64 and arm64.
 
-## Download the CLI
+## Install
 
-Download a `cli/v0.1.0` archive from [GitHub Releases](https://github.com/SmilingXinyi/agent-engine/releases). Supported targets are `darwin_arm64` (Apple Silicon), `darwin_amd64` (Intel macOS), `linux_amd64` (x86-64) and `linux_arm64`. Archives are named `agent-engine-cli_v0.1.0_<os>_<arch>.tar.gz` and contain `agent-engine` plus English and Chinese READMEs. `SHA256SUMS` is provided with the release.
+```sh
+curl -fsSL https://github.com/SmilingXinyi/agent-engine/releases/latest/download/install.sh | sh
+```
 
-For example, on Apple Silicon:
+The installer selects an archive from the latest stable release, verifies it against `SHA256SUMS`, and installs to `~/.local/bin`. For a custom destination, use `sh -s -- --install-dir "$HOME/bin"` after the pipe. For manual installation, download the matching `agent-engine-cli_<version>_<os>_<arch>.tar.gz`, verify the checksum, and extract the binary. [GitHub Releases](https://github.com/SmilingXinyi/agent-engine/releases)
 
-~~~bash
-tar -xzf agent-engine-cli_v0.1.0_darwin_arm64.tar.gz
-./agent-engine init /path/to/project
-export AGENT_LLM_MODEL='your-model'
-export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
-export AGENT_LLM_API_KEY='your-key'
-./agent-engine chat /path/to/project
-~~~
+The stable release must include `install.sh`. To run the current checkout, build from the repository root with Go 1.25.0 or later, then use `/tmp/agent-engine` in the examples below.
 
-No Go installation is required. The executable is the standalone Workspace Agent CLI with project configuration, tools and persistent conversation support; configure your own model service, credentials, and external MCP server executables/runtimes.
-
-## Run from source
-
-Run from the repository root; the project directory must already exist:
-
-~~~bash
-go run ./cli/cmd/agent-engine init /path/to/project
-export AGENT_LLM_MODEL='your-model'
-export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
-export AGENT_LLM_API_KEY='your-key'
-go run ./cli/cmd/agent-engine chat /path/to/project
-
-# Flags precede the directory. Explicitly opt into unattended execution:
-go run ./cli/cmd/agent-engine chat --approval auto /path/to/project
+```sh
 go build -o /tmp/agent-engine ./cli/cmd/agent-engine
-~~~
+```
 
-The default directory is the current directory; no parent search occurs. Initialization preserves existing files and runs no model, tools, or MCP servers. Add `.agents/state/` to your project's version-control ignore rules.
+## Start a conversation
 
-Commands: `/help`, `/history` (current messages as JSON), `/reset` (confirmed context reset; audit events retained), `/exit`. Reopening restores the context but waits for a new prompt. Ctrl+C cancels an active execution; another interrupt requests exit. In plain input mode, an idle interrupt or EOF exits and releases resources. Responses are complete messages, not streaming output.
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+cd /path/to/project
 
-## Interactive editing
+agent-engine init
+export AGENT_LLM_MODEL='your-model'
+export AGENT_LLM_BASE_URL='https://your-provider.example/v1'
+# Set AGENT_LLM_API_KEY if your endpoint requires authentication.
 
-Current source builds automatically use [Bubbline](https://github.com/knz/bubbline) when both stdin and stdout are terminals and `TERM` is not `dumb`. Editing stays inline rather than taking over the screen.
+agent-engine chat
+```
 
-| Keys | Behavior |
+`init` creates YAML templates in an existing directory and preserves existing files. For project-specific settings, run `agent-engine configure` before chatting. It analyzes selected project files with the configured model, previews proposed changes and missing inputs, and writes after approval. Existing MCP server settings are preserved. Add `.agents/state/` to your project's version-control ignore rules.
+
+## Commands and shortcuts
+
+| Command | Purpose |
 | --- | --- |
-| Enter | Submit the whole input |
+| `agent-engine help chat` | See command options |
+| `agent-engine chat [directory]` | Open the workspace, restore context, and wait for input |
+| `agent-engine -c [directory]` | Display saved messages and tool summaries before chatting. Also available as `chat -c` |
+| `agent-engine chat --verbose [directory]` | Show call IDs, available exit codes, and result previews |
+
+Commands default to the current directory. Place options before the directory argument. Each turn shows why it ended and how much time went to the model, tools, and user input. The CLI displays an estimated context size and provider-reported token usage separately. Model replies appear as complete messages.
+
+| In chat | Purpose |
+| --- | --- |
+| `/help` | Show commands and shortcuts |
+| `/history` | Show full message JSON since the last reset |
+| `/reset` | Confirm a fresh context and retain the audit log |
+| `/exit` | Close the session and release MCP connections and the workspace lock |
+
+<details>
+<summary>Terminal editing</summary>
+
+| Keys | Action |
+| --- | --- |
+| Enter | Submit the full input |
 | Ctrl+J / Ctrl+O / Alt+Enter | Insert a newline |
-| Up / Down | Move across lines; recall history at input boundaries |
-| Ctrl+R | Search input history; Enter recalls the match, another Enter submits |
-| Ctrl+C | Clear a draft; exit when input is empty |
-| Ctrl+D | Finish input on an empty line; otherwise use the editor's deletion behavior |
+| ↑ / ↓ | Move across lines or recall history at input boundaries |
+| Ctrl+R | Search history. Press Enter once to recall and again to submit |
+| Ctrl+C | Clear the draft or exit on empty input. During a turn, cancel it and press again to request exit |
+| Ctrl+D | Finish input on an empty line or delete a character while editing |
 
-Unicode and bracketed multiline paste are supported; pasted newlines do not submit the prompt. Shift+Enter depends on terminal key encoding. This integration does not enable an extended keyboard protocol; use a supported newline key or configure the terminal to send Ctrl+J (LF) for Shift+Enter.
+The terminal editor supports Unicode and multiline paste. Shift+Enter depends on terminal key mapping. Approval prompts use a separate editor and keep answers out of recall history. Ctrl+C during approval interrupts the active execution. Pipes, file redirection, and `TERM=dumb` use line-by-line input.
 
-Recall history comes only from user messages in the current workspace's NDJSON, with no extra history file. It survives reopening and clears after `/reset`. Approval/reset prompts have independent editors without conversation history, and their answers are not added to recall history. Ctrl+C during tool approval interrupts that execution immediately.
-
-Pipes, redirected files or `TERM=dumb` retain plain line-by-line input with no editor escape sequences. A single owner reads stdin in each phase; editing or cancellation restores terminal state before returning to execution.
+</details>
 
 ## Project configuration
 
-~~~text
-.agents/
-  workspace.json
-  prompt.md
-  tools.json
-  mcp.json
-  skills/<name>/SKILL.md
-  state/
-    history.ndjson
-    workspace.lock
-~~~
+| Path | Purpose |
+| --- | --- |
+| `.agents/workspace.yaml` | Model, API, retries, run limits, and compression |
+| `.agents/prompt.md` | Project-specific system instructions |
+| `.agents/tools.yaml` | Enabled built-in tools and their limits |
+| `.agents/mcp.yaml` | MCP server definitions under `mcpServers` |
+| `.agents/skills/<name>/SKILL.md` | Local skill |
+| `.agents/.subagents/<role>/` | Subagent role configuration |
+| `.agents/state/` | Conversation journal, optional compression checkpoint, and workspace lock |
 
-All fields in `workspace.json` are optional:
+```yaml
+# .agents/workspace.yaml
+model: your-model
+baseURL: https://your-provider.example/v1
+apiType: chat_completions
+modelMaxRetries: 2
+maxSteps: 40
+maxHistoryRounds: 10
+timeoutSeconds: 900
+```
 
-~~~json
-{
-  "model": "your-model",
-  "baseURL": "https://your-provider.example/v1",
-  "apiType": "chat_completions",
-  "apiKeyEnv": "PROJECT_API_KEY",
-  "maxSteps": 40,
-  "maxHistoryRounds": 10,
-  "timeoutSeconds": 900
-}
-~~~
+- Fields are optional. `model` falls back to `AGENT_MODEL` then `AGENT_LLM_MODEL`, and `baseURL` falls back to `AGENT_LLM_BASE_URL`. `apiType` defaults to `chat_completions` and also accepts `responses_api`.
+- Use `apiKeyEnv` to name the credential variable. When omitted, the CLI checks `AGENT_LLM_TOKEN` then `AGENT_LLM_API_KEY`. Load any `.env` file before starting the CLI.
+- `modelMaxRetries` sets the number of additional attempts for transient model failures. Set it to `0` to disable retries. Use `reasoningEffort` for reasoning effort and `providerOptions` for provider-specific settings.
+- `maxHistoryRounds` limits complete rounds sent to the model. Add `compression: {}` to trim long tool results and summarize older turns. [Compression configuration](../compression/README_cn.md)
 
-Model fallback is `AGENT_MODEL`, then `AGENT_LLM_MODEL`; base URL falls back to `AGENT_LLM_BASE_URL`. API type is `chat_completions` by default, or `responses_api`. `apiKeyEnv` names an environment variable; absent that setting, read `AGENT_LLM_TOKEN` then `AGENT_LLM_API_KEY`. Authentication is optional. No `.env` file is automatically loaded. Zero limits use the defaults shown above; negative limits are invalid.
+The system context includes the workspace description, `prompt.md`, root `AGENTS.md`, and skill metadata in that order. Delegation instructions follow when subagents are enabled. Reopen the workspace to load changes. File tools are scoped to the project root. Shell starts in the project root. Shell defaults to 30 seconds, subject to the time remaining in the turn. Add `ask_user: {}` under `builtinTools` to enable interactive questions. [Workspace configuration](../workspace/README.md#project-configuration) · [Built-in tools](../ai-tools/README_cn.md) · [MCP configuration](../mcp-runtime/README_cn.md)
 
-By default, `maxHistoryRounds` limits the number of complete rounds sent to the model. Add `"compression": {}` to opt into trimming long tool results and summarizing older rounds when the limit is exceeded. Set `compression.contextWindow` to also trigger summaries by token occupancy. [Compression configuration](../compression/README_cn.md)
+**Upgrading from JSON.** Convert `workspace.json`, `tools.json`, `mcp.json`, and subagent configuration files to `.yaml`. Move any legacy `systemPrompt` into `prompt.md`. Existing NDJSON history and compression checkpoints can still be loaded.
 
-System context includes, in order, the workspace description, the verbatim contents of `.agents/prompt.md`, root `AGENTS.md` and skill metadata. Skill bodies are fetched through `get_skill`. Nothing is inherited from other projects. Configuration, prompt, project instructions and skills are fixed snapshots until reopening. Missing MCP/skills are empty; malformed files fail startup. Workspace and tools configuration files are required.
+## Approvals and recovery
 
-`prompt.md` is optional: missing or empty files add no custom prompt; other read errors fail startup. Initialization creates an empty file without overwriting existing contents. To migrate, move the text from `workspace.json.systemPrompt` into `.agents/prompt.md` and remove the JSON field. The old field is rejected as unknown.
+| Mode | Behavior |
+| --- | --- |
+| `--approval writes` (default) | Ask before writes, patches, Shell, and MCP calls |
+| `--approval all` | Ask before every tool call |
+| `--approval auto` | Execute enabled tools automatically |
 
-`tools.json` uses the [existing built-in configuration](../ai-tools/README_cn.md). Only listed, enabled tools are available. Initialization explicitly lists file tools and Shell. File root and initial Shell directory must match the project root; empty settings or `"."` bind to that root. Disabled tools do not validate dependencies.
+Enter `y` or `yes` to approve. A denial is returned to the model as a tool result. Shell and MCP run with the CLI process's permissions. [Workspace tool boundaries](../workspace/README_cn.md#确认与资源边界)
 
-`mcp.json` uses the [existing MCP configuration](../mcp-runtime/README_cn.md), independently of tools configuration. Enabled stdio servers default to the project directory. Relative `dir` values and relative commands containing a path separator resolve against the project root; bare commands use PATH. Arguments are interpreted by the subprocess in its working directory. Startup failure closes resources already created.
+One process at a time can open a workspace. Reopening after interruption retains recorded results and marks calls as unexecuted or of unknown outcome. Verify external effects before retrying a call with an unknown outcome. `/reset` retains the audit log, and files and external effects remain as they were before the reset. [NDJSON history and recovery](../workspace/README.md#durable-ndjson-history)
 
-Default `--approval writes` automatically permits only local `read_file`, `list_directory` and `get_skill`. Writes, patches, Shell and every MCP tool require `y`/`yes`. `all` confirms every call; `auto` permits enabled calls. Denial becomes a tool error for the model. Confirmation EOF or read failure never approves execution.
+## Development and embedding
 
-File tools enforce their existing root boundary. Shell and MCP retain the process's permissions and environment; a working directory is not a sandbox. Workspace separation isolates configuration and context, not the operating system.
-
-## Durable NDJSON history
-
-`.agents/state/history.ndjson` is the source of the full execution history. Every newline-terminated JSON event has `version`, increasing `sequence`, `time`, `type`, optional `run_id` and `data`. Types are `run_started`, `user_message`, `model_message`, `tool_started`, `tool_result`, `run_ended` and `context_reset`. SDK messages, raw tool arguments and large JSON extension numbers are preserved.
-
-User input is synced before model calls; model responses before dispatch; tool starts after approval and before execution; results immediately after return. Each event appends only new data. Write or sync failure prevents further calls until reopening. Model configuration, authentication headers and credentials are not serialized; user/model text and tool output are stored as supplied.
-
-Replay truncates an uncommitted final fragment without a newline and reports the repair. Corrupt interior records, unknown versions or invalid ordering fail without overwriting history. When compression is enabled, `.agents/state/context-checkpoint.json` saves the summary, recent context and journal position after a completed run. Later requests, including after reopening, use the checkpoint and newer messages. The journal remains available for `/history` and recovery. If the checkpoint is invalid, restore it or use `/reset` to start a fresh conversation.
-
-Interrupted batches are completed with error results: calls without an execution-start record are marked unexecuted; started calls without a recorded result are marked unknown and require verification before retrying. Completed results are retained. Recovery never replays tools or calls the model. Cancellation, model limits and execution errors also leave a valid paired history. External effects and history are not one transaction; there is no exactly-once guarantee or rollback on reset.
-
-One OS file lock permits one process per workspace. Different projects can run separately; locks release on process exit, and the lock file remains. State files/directories reject symlinks. Do not edit or replace active state files; this does not defend against an external writer with the same local permissions. New directories use `0700`, files `0600`.
-
-## Workspace API and tests
-
-The root package exposes `Init`, `Open`, `Execute`, `History`, `Reset` and `Close`. Import public configuration and event types from `workspace/protocol`. `Execute` returns the existing loop result. `OpenOptions` accepts a Provider, approval policy/callback, loop hooks and warning callback, with no terminal dependency. An injected Provider remains caller-owned; missing approval callbacks deny protected calls.
-
-History returns owned snapshots; while executing, a tool batch may still be pending. Concurrent Execute/Reset calls fail as busy. Idempotent, concurrency-safe Close cancels and waits for execution, then releases MCP, history and the lock. Do not synchronously call Close from execution hooks, since it waits for that execution.
-
-~~~bash
+```sh
 go test ./cli/... ./workspace/...
 go test -race ./cli/... ./workspace/... ./ai-tools/...
-go test ./agent/... ./agent-skill/... ./ai-sdk/... ./ai-tool-loop/... ./ai-tools/... ./mcp-runtime/... ./workspace/... ./cli/...
-~~~
+sh cli/scripts/install_test.sh
+```
 
-Tests use fake Providers, temporary directories, controlled stdio MCP processes and process crashes, with no live model or external MCP server. Shell tests explicitly skip when `sh` is missing; symlink tests skip if unsupported. See [中文说明](./README_cn.md) for detailed configuration and examples.
+For embedding, call `cli.Run(ctx, args, cliprot.Options{Input: input, Output: output, Signals: signals})` with `cliprot` imported from `cli/protocol`. Input and output are required. The caller registers the optional signal channel. `chat` and `configure` own and close input, while output stays caller-owned. Use the workspace Go API to manage sessions directly. [Workspace API](../workspace/README.md#go-api-and-tests) · [Workspace-wide tests](../README.md#development-and-releases)
 
 ## Publishing
 
-Only `ai-sdk` and `cli` receive new semantic version tags. `ai-sdk/v*` identifies the independently consumed SDK; only `cli/v*` publishes GitHub Releases and binary assets. Other modules remain internal workspace dependencies, built from the same repository checkout. Their existing local replacements are retained; installing the CLI with `go install ...@version` is not supported. Build from this checkout or use a release archive.
+A `cli/v*` tag triggers race and smoke tests on macOS and Linux, then publishes the four platform archives, `SHA256SUMS`, and the installer. Public SDK releases use `ai-sdk/v*` tags. Use the manual workflow to publish an existing CLI tag from that tag's source. Suffixes such as `-rc.1` produce prereleases. [Release workflow](../.github/workflows/cli-release.yml)
 
-Pushing a `cli/v*` tag triggers `.github/workflows/cli-release.yml`. The workflow runs all workspace race tests and native CLI smoke checks on Linux and macOS, cross-compiles four archives, then uploads them and `SHA256SUMS` to a draft GitHub Release before publishing it. Other module tags do not trigger this workflow.
+Run the packaging script from the repository root to build an archive locally.
 
-~~~bash
-git tag -a cli/v0.1.0 -m 'Release CLI v0.1.0'
-git push origin refs/tags/cli/v0.1.0
+```sh
+bash cli/scripts/package-release.sh darwin arm64 v1.2.3 /tmp/cli-release
+```
 
-# Reuse the same packaging step locally from the repository root:
-bash cli/scripts/package-release.sh darwin arm64 v0.1.0 /tmp/cli-release
-~~~
+<details>
+<summary>Push a tag or publish manually</summary>
 
-CGO is disabled; project configurations, credentials and conversation histories are never packaged. Only the release job has `contents: write`. Failed runs can be rerun; same-name assets are replaced. Version suffixes such as `cli/v0.2.0-rc.1` produce prereleases.
+Replace the example version with the version to release.
 
-To publish an existing tag manually, use Run workflow in Actions or `gh workflow run cli-release.yml --ref main -f tag=cli/v0.1.0`. Manual runs also check out and test the specified tag, without moving it or packaging main's application code.
+```sh
+git tag -a cli/v1.2.3 -m 'Release CLI v1.2.3'
+git push origin refs/tags/cli/v1.2.3
 
-## Embedding the command runner
+# Publish an existing tag again.
+gh workflow run cli-release.yml --ref main -f tag=cli/v1.2.3
+```
 
-Call `cli.Run(ctx, args, cliprot.Options{Input: input, Output: output, Signals: signals})`, importing `cli/protocol` as `cliprot`. Input and Output are required; Signals is optional and caller-registered. Run returns errors without exiting the process. Chat closes Input and its workspace when it returns; init and argument validation leave Input open. Output always remains caller-owned.
+Archives contain only the binary. A failed workflow can be rerun from Actions. Same-name release assets are replaced.
 
-The source entry moved from `workspace/cmd/agent-engine` to `cli/cmd/agent-engine`. New releases use `cli/v*` tags and `agent-engine-cli_*` archives. Legacy `workspace/v*`, `agent/v*` and `ai-tool-loop/v*` tags and Releases have been removed.
+</details>

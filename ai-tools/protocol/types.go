@@ -2,12 +2,15 @@
 // Executable tools use ai-tool-loop/protocol.Tool directly.
 package protocol
 
+import "context"
+
 const (
 	ReadFile      = "read_file"
 	WriteFile     = "write_file"
 	ApplyPatch    = "apply_patch"
 	ListDirectory = "list_directory"
 	Shell         = "shell"
+	AskUser       = "ask_user"
 )
 
 const (
@@ -69,4 +72,16 @@ type CommandResult struct {
 	Stderr    string `json:"stderr"`
 	ExitCode  int    `json:"exit_code"`
 	Truncated bool   `json:"truncated"`
+}
+
+// Dependencies are supplied by the application for explicitly enabled tools.
+type Dependencies struct {
+	AskUser AskUserFunc
+}
+
+type AskUserFunc func(context.Context, UserQuestion) (string, error)
+
+type UserQuestion struct {
+	Question string   `json:"question"`
+	Choices  []string `json:"choices,omitempty"`
 }

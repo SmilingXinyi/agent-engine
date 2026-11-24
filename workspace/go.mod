@@ -11,6 +11,7 @@ require (
 	github.com/SmilingXinyi/agent-engine/compression v0.0.0
 	github.com/SmilingXinyi/agent-engine/mcp-runtime v0.0.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -22,7 +23,6 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace github.com/SmilingXinyi/agent-engine/agent => ../agent

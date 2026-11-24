@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,39 +15,68 @@ import (
 	"github.com/SmilingXinyi/agent-engine/workspace/protocol"
 )
 
+const (
+	workspaceConfigName = "workspace.yaml"
+	toolsConfigName     = "tools.yaml"
+	mcpConfigName       = "mcp.yaml"
+	promptName          = "prompt.md"
+)
+
+var configTemplates = []struct{ name, content string }{
+	{workspaceConfigName, `# Set model and baseURL here or export AGENT_LLM_MODEL and AGENT_LLM_BASE_URL.
+# apiKeyEnv names an environment variable. Keep credentials in the environment.
+# apiType: chat_completions
+# reasoningEffort: medium
+modelMaxRetries: 2
+maxSteps: 40
+maxHistoryRounds: 10
+timeoutSeconds: 900
+`},
+	{toolsConfigName, `# List the built-in tools this workspace can use.
+builtinTools:
+  read_file: {}
+  list_directory: {}
+  write_file: {}
+  apply_patch: {}
+  shell: {}
+  # ask_user: {}
+shell:
+  timeoutSeconds: 30
+`},
+	{mcpConfigName, `# Add named MCP servers under mcpServers.
+mcpServers: {}
+`},
+	{promptName, ""},
+}
+
 // Init creates a workspace without overwriting existing configuration. The
 // target project directory must already exist. No providers or tools are run.
-func Init(directory string) error {
+func Init(directory string) (err error) {
 	root, err := projectRoot(directory)
 	if err != nil {
 		return err
 	}
 	agents := filepath.Join(root, ".agents")
-	for _, path := range []string{agents, filepath.Join(agents, "skills"), filepath.Join(agents, "state"), filepath.Join(agents, subagentsDirectory)} {
+	for _, path := range []string{agents, filepath.Join(agents, "skills"), filepath.Join(agents, subagentsDirectory)} {
 		if err := ensureDirectory(path); err != nil {
 			return err
 		}
 	}
-	configs := []struct {
-		name  string
-		value any
-	}{
-		{"prompt.md", nil},
-		{"workspace.json", protocol.Config{MaxSteps: 40, MaxHistoryRounds: 10, TimeoutSeconds: 900}},
-		{"tools.json", toolsprot.Config{BuiltinTools: map[string]toolsprot.ToolConfig{
-			toolsprot.ReadFile: {}, toolsprot.ListDirectory: {}, toolsprot.WriteFile: {}, toolsprot.ApplyPatch: {}, toolsprot.Shell: {},
-		}}},
-		{"mcp.json", mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{}}},
+	lock, err := lockWorkspace(root)
+	if err != nil {
+		return err
 	}
-	for _, config := range configs {
-		var content []byte
-		if config.value != nil {
-			content, err = json.MarshalIndent(config.value, "", "  ")
-			if err != nil {
-				return err
-			}
-			content = append(content, '\n')
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	// Check legacy files before creating templates that would shadow them.
+	for _, config := range configTemplates {
+		if config.name == promptName {
+			continue
 		}
+		if _, err := protocol.ReadYAMLConfig(filepath.Join(agents, config.name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	for _, config := range configTemplates {
 		path := filepath.Join(agents, config.name)
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if errors.Is(err, os.ErrExist) {
@@ -57,9 +85,8 @@ func Init(directory string) error {
 		if err != nil {
 			return err
 		}
-		_, writeErr := file.Write(content)
-		err = errors.Join(writeErr, file.Sync(), file.Close())
-		if err != nil {
+		_, writeErr := file.WriteString(config.content)
+		if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
 			return err
 		}
 	}
@@ -102,37 +129,37 @@ func ensureDirectory(path string) error {
 	return nil
 }
 
-func loadResources(root, instructions string) ([]loopprot.Tool, mcpprot.Config, string, error) {
+func lockWorkspace(root string) (*os.File, error) {
+	state := filepath.Join(root, ".agents", "state")
+	if err := ensureDirectory(state); err != nil {
+		return nil, err
+	}
+	lock, err := acquireLock(filepath.Join(state, "workspace.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("lock workspace %s: %w", root, err)
+	}
+	return lock, nil
+}
+
+func loadResources(root, instructions string, askUser toolsprot.AskUserFunc) ([]loopprot.Tool, mcpprot.Config, string, error) {
 	agents := filepath.Join(root, ".agents")
-	config, err := toolsprot.LoadConfig(filepath.Join(agents, "tools.json"))
+	content, err := protocol.ReadYAMLConfig(filepath.Join(agents, toolsConfigName))
 	if err != nil {
 		return nil, mcpprot.Config{}, "", err
 	}
-	// Only validate dependencies of enabled tools, retaining ai-tools semantics.
-	for _, name := range config.EnabledNames() {
-		if name == toolsprot.Shell {
-			if err := bindRoot(root, &config.Shell.Dir); err != nil {
-				return nil, mcpprot.Config{}, "", err
-			}
-		} else {
-			if err := bindRoot(root, &config.Filesystem.Root); err != nil {
-				return nil, mcpprot.Config{}, "", err
-			}
-		}
-	}
-	tools, err := aitools.Build(config)
+	tools, err := buildTools(root, content, askUser)
 	if err != nil {
-		return nil, mcpprot.Config{}, "", err
+		return nil, mcpprot.Config{}, "", fmt.Errorf("%s: %w", toolsConfigName, err)
 	}
 	mcpConfig := mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{}}
-	content, err := os.ReadFile(filepath.Join(agents, "mcp.json"))
+	content, err = protocol.ReadYAMLConfig(filepath.Join(agents, mcpConfigName))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, mcpConfig, "", err
 	}
 	if err == nil {
-		mcpConfig, err = mcpprot.ParseConfig(string(content))
+		mcpConfig, err = decodeMCPConfig(content)
 		if err != nil {
-			return nil, mcpConfig, "", err
+			return nil, mcpConfig, "", fmt.Errorf("%s: %w", mcpConfigName, err)
 		}
 	}
 	for name, server := range mcpConfig.Servers {
@@ -164,7 +191,7 @@ func loadResources(root, instructions string) ([]loopprot.Tool, mcpprot.Config, 
 		}
 		tools = append(tools, tool)
 	}
-	prompt, err := os.ReadFile(filepath.Join(agents, "prompt.md"))
+	prompt, err := os.ReadFile(filepath.Join(agents, promptName))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, mcpConfig, "", fmt.Errorf("read workspace prompt: %w", err)
 	}
@@ -194,4 +221,38 @@ func bindRoot(root string, configured *string) error {
 	}
 	*configured = root
 	return nil
+}
+
+func buildTools(root string, content []byte, askUser toolsprot.AskUserFunc) ([]loopprot.Tool, error) {
+	var config toolsprot.Config
+	if err := protocol.DecodeYAML(content, &config); err != nil {
+		return nil, err
+	}
+	if config.BuiltinTools == nil {
+		return nil, fmt.Errorf("expected a builtinTools mapping")
+	}
+	for _, name := range config.EnabledNames() {
+		switch name {
+		case toolsprot.Shell:
+			if err := bindRoot(root, &config.Shell.Dir); err != nil {
+				return nil, err
+			}
+		case toolsprot.ReadFile, toolsprot.ListDirectory, toolsprot.WriteFile, toolsprot.ApplyPatch:
+			if err := bindRoot(root, &config.Filesystem.Root); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return aitools.BuildWithDependencies(config, toolsprot.Dependencies{AskUser: askUser})
+}
+
+func decodeMCPConfig(content []byte) (mcpprot.Config, error) {
+	var config mcpprot.Config
+	if err := protocol.DecodeYAML(content, &config); err != nil {
+		return config, err
+	}
+	if config.Servers == nil {
+		return config, fmt.Errorf("expected an mcpServers mapping")
+	}
+	return config, config.Validate()
 }

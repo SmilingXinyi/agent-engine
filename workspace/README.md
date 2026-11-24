@@ -6,43 +6,48 @@ The [CLI module](../cli/README.md) owns command dispatch, inline editing, approv
 
 ## Project configuration
 
+For existing projects, convert `workspace.json`, `tools.json` and `mcp.json` to the corresponding `.yaml` files. Apply the same change to subagent configuration files. Keep state files in their existing formats.
+
 ~~~text
 .agents/
-  workspace.json
+  workspace.yaml
   prompt.md
-  tools.json
-  mcp.json
+  tools.yaml
+  mcp.yaml
   skills/<name>/SKILL.md
   state/
     history.ndjson
     workspace.lock
 ~~~
 
-All fields in `workspace.json` are optional:
+All fields in `workspace.yaml` are optional.
 
-~~~json
-{
-  "model": "your-model",
-  "baseURL": "https://your-provider.example/v1",
-  "apiType": "chat_completions",
-  "apiKeyEnv": "PROJECT_API_KEY",
-  "maxSteps": 40,
-  "maxHistoryRounds": 10,
-  "timeoutSeconds": 900
-}
+~~~yaml
+model: your-model
+baseURL: https://your-provider.example/v1
+apiType: chat_completions
+apiKeyEnv: PROJECT_API_KEY
+modelMaxRetries: 2
+maxSteps: 40
+maxHistoryRounds: 10
+timeoutSeconds: 900
 ~~~
 
 Model fallback is `AGENT_MODEL`, then `AGENT_LLM_MODEL`; base URL falls back to `AGENT_LLM_BASE_URL`. API type is `chat_completions` by default, or `responses_api`. `apiKeyEnv` names an environment variable; absent that setting, read `AGENT_LLM_TOKEN` then `AGENT_LLM_API_KEY`. Authentication is optional. No `.env` file is automatically loaded. Zero limits use the defaults shown above; negative limits are invalid.
 
-By default, `maxHistoryRounds` limits the number of complete rounds sent to the model. Add `"compression": {}` to opt into trimming long tool results and summarizing older rounds when the limit is exceeded. Set `compression.contextWindow` to also trigger summaries by token occupancy. [Compression configuration](../compression/README_cn.md)
+Set `modelMaxRetries` to the number of additional attempts for a transient model request failure. The default is two, and zero disables retries. Set `reasoningEffort` for providers that accept reasoning effort or use `providerOptions` for provider-specific fields.
+
+By default, `maxHistoryRounds` limits the number of complete rounds sent to the model. Add `compression: {}` to opt into trimming long tool results and summarizing older rounds when the limit is exceeded. Set `compression.contextWindow` to also trigger summaries by token occupancy. [Compression configuration](../compression/README_cn.md)
 
 System context includes, in order, the workspace description, the verbatim contents of `.agents/prompt.md`, root `AGENTS.md` and skill metadata. Skill bodies are fetched through `get_skill`. Nothing is inherited from other projects. Configuration, prompt, project instructions and skills are fixed snapshots until reopening. Missing MCP/skills are empty; malformed files fail startup. Workspace and tools configuration files are required.
 
-`prompt.md` is optional: missing or empty files add no custom prompt; other read errors fail startup. Initialization creates an empty file without overwriting existing contents. To migrate, move the text from `workspace.json.systemPrompt` into `.agents/prompt.md` and remove the JSON field. The old field is rejected as unknown.
+`prompt.md` is optional: missing or empty files add no custom prompt; other read errors fail startup. Initialization creates an empty file without overwriting existing contents. Move any legacy `systemPrompt` value into `.agents/prompt.md` during migration.
 
-`tools.json` uses the [existing built-in configuration](../ai-tools/README_cn.md). Only listed, enabled tools are available. Initialization explicitly lists file tools and Shell. File root and initial Shell directory must match the project root; empty settings or `"."` bind to that root. Disabled tools do not validate dependencies.
+`tools.yaml` uses the field names from the [built-in configuration](../ai-tools/README_cn.md). Only listed, enabled tools are available. Initialization explicitly lists file tools and Shell. File root and initial Shell directory must match the project root; empty settings or `"."` bind to that root. Disabled tools do not validate dependencies.
 
-`mcp.json` uses the [existing MCP configuration](../mcp-runtime/README_cn.md), independently of tools configuration. Enabled stdio servers default to the project directory. Relative `dir` values and relative commands containing a path separator resolve against the project root; bare commands use PATH. Arguments are interpreted by the subprocess in its working directory. Startup failure closes resources already created.
+Set `shell.timeoutSeconds` in `tools.yaml` to control individual Shell calls. The default is 30 seconds, subject to the remaining turn budget. Add `ask_user: {}` under `builtinTools` to let the model ask a question in an interactive CLI terminal.
+
+`mcp.yaml` uses the `mcpServers` mapping and field names from the [MCP configuration](../mcp-runtime/README_cn.md), independently of tools configuration. Enabled stdio servers default to the project directory. Relative `dir` values and relative commands containing a path separator resolve against the project root; bare commands use PATH. Arguments are interpreted by the subprocess in its working directory. Startup failure closes resources already created.
 
 The default `ApprovalWrites` policy automatically permits only local `read_file`, `list_directory` and `get_skill`. Writes, patches, Shell and every MCP tool require the caller’s approval callback. `ApprovalAll` confirms every call; `ApprovalAuto` permits enabled calls. Denial becomes a tool error for the model. A missing confirmation callback denies protected calls.
 
@@ -54,9 +59,9 @@ Each immediate directory under `.agents/.subagents/` exposes one `subagent_<dire
 
 | File | Example |
 | --- | --- |
-| `workspace.json` | `{"description":"Research repository behavior and cite file paths and lines"}` |
+| `workspace.yaml` | `{"description":"Research repository behavior and cite file paths and lines"}` |
 | `prompt.md` | `Find the entry point, trace its callers, and cite the evidence.` |
-| `tools.json` | `{"builtinTools":{"read_file":{},"list_directory":{}}}` |
+| `tools.yaml` | `{"builtinTools":{"read_file":{},"list_directory":{}}}` |
 
 The optional `model` field defaults to the workspace model. The subagent uses its own prompt plus the root `AGENTS.md`. Select at least one enabled local read-only tool from the parent workspace. Each delegation starts with fresh history and runs synchronously. A turn can delegate twice across all roles, with up to six model calls and 60 seconds per delegation. Full approval mode prompts for delegation and child tool calls. The parent history keeps the delegation request, bounded result, and child run ID and usage metadata.
 

@@ -14,6 +14,16 @@ func Measure(messages []aiprot.Message, contextWindow int) protocol.ContextUsage
 	return protocol.NewContextUsage(estimateTokens(messages), contextWindow)
 }
 
+// MeasureRequest estimates the messages and tool definitions sent in one call.
+func MeasureRequest(request aiprot.ModelRequest) int {
+	tokens := estimateTokens(request.Messages)
+	if len(request.Tools) > 0 {
+		definitions, _ := json.Marshal(request.Tools)
+		tokens += textTokens(string(definitions))
+	}
+	return tokens
+}
+
 func estimateTokens(messages []aiprot.Message) int {
 	tokens := 0
 	for _, message := range messages {

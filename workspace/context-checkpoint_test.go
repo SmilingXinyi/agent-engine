@@ -21,7 +21,7 @@ func newCheckpointProject(t *testing.T) string {
 	t.Helper()
 	root := newProject(t)
 	keep := 1
-	writeJSON(t, filepath.Join(root, ".agents/workspace.json"), protocol.Config{
+	writeJSON(t, filepath.Join(root, ".agents/workspace.yaml"), protocol.Config{
 		Model: "test-model", MaxSteps: 1, MaxHistoryRounds: 2,
 		Compression: &compressionprot.Config{KeepRecentRounds: &keep, MaxRecentRounds: 1},
 	})

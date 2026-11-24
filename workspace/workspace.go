@@ -67,7 +67,16 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("workspace is not initialized; run agent-engine init (metadata must be a real directory)")
 	}
-	config, err := protocol.LoadConfig(filepath.Join(agents, "workspace.json"))
+	lock, err := lockWorkspace(root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if lock != nil {
+			err = errors.Join(err, lock.Close())
+		}
+	}()
+	config, err := protocol.LoadConfig(filepath.Join(agents, workspaceConfigName))
 	if err != nil {
 		return nil, err
 	}
@@ -75,27 +84,15 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 	if strings.TrimSpace(config.Model) == "" {
 		return nil, fmt.Errorf("configure workspace model or AGENT_LLM_MODEL")
 	}
-	provider := options.Provider
-	if provider == nil {
-		key := ""
-		if config.APIKeyEnv != "" {
-			key = os.Getenv(config.APIKeyEnv)
-		} else {
-			key = os.Getenv("AGENT_LLM_TOKEN")
-			if key == "" {
-				key = os.Getenv("AGENT_LLM_API_KEY")
-			}
-		}
-		provider, err = openai.New(openai.Config{BaseURL: config.BaseURL, APIKey: key, APIType: openai.APIType(config.APIType)})
-		if err != nil {
-			return nil, err
-		}
+	provider, err := workspaceProvider(config, options.Provider)
+	if err != nil {
+		return nil, err
 	}
 	projectInstructions, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	tools, mcpConfig, instructions, err := loadResources(root, string(projectInstructions))
+	tools, mcpConfig, instructions, err := loadResources(root, string(projectInstructions), options.AskUser)
 	if err != nil {
 		return nil, err
 	}
@@ -104,19 +101,13 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 		return nil, err
 	}
 	state := filepath.Join(agents, "state")
-	if err := ensureDirectory(state); err != nil {
-		return nil, err
-	}
-	lock, err := acquireLock(filepath.Join(state, "workspace.lock"))
-	if err != nil {
-		return nil, err
-	}
 	lifetime, stop := context.WithCancel(ctx)
 	workspace := &Workspace{root: root, config: config, options: options, tools: tools, lock: lock, lifetime: lifetime, stopLifetime: stop}
+	lock = nil // Workspace now owns the lock.
 	workspace.readOnly = make(map[string]bool)
 	for _, tool := range tools {
 		switch tool.Definition.Name {
-		case "read_file", "list_directory", "get_skill":
+		case "read_file", "list_directory", "get_skill", "ask_user":
 			workspace.readOnly[tool.Definition.Name] = true
 		}
 	}
@@ -164,20 +155,27 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 	if len(workspace.subagents) > 0 {
 		workspace.system += "\n\n" + delegationInstructions
 	}
+	guardRequest := func(ctx context.Context, _ aiprot.RequestInfo) error {
+		return errors.Join(ctx.Err(), workspace.history.healthy())
+	}
+	recordResponse := func(_ context.Context, info aiprot.ResponseInfo) error {
+		if info.Error != nil || len(info.Response.Message.Parts) == 0 ||
+			info.Request.Metadata[compressionprot.MetadataPurpose] == compressionprot.PurposeSummary {
+			return nil
+		}
+		message := info.Response.Message.Clone()
+		if message.Role == "" {
+			message.Role = aiprot.RoleAssistant
+		}
+		return workspace.history.append(protocol.ModelMessage, workspace.history.runID(), protocol.EventData{Message: &message})
+	}
 	client := ai.NewClient(provider, aiprot.Hooks{
-		OnRequest: []aiprot.RequestHook{func(ctx context.Context, _ aiprot.RequestInfo) error {
-			return errors.Join(ctx.Err(), workspace.history.healthy())
-		}},
-		OnResponse: []aiprot.ResponseHook{func(_ context.Context, info aiprot.ResponseInfo) error {
-			if info.Error != nil || len(info.Response.Message.Parts) == 0 ||
-				info.Request.Metadata[compressionprot.MetadataPurpose] == compressionprot.PurposeSummary {
+		OnRequest: []aiprot.RequestHook{guardRequest},
+		OnResponse: []aiprot.ResponseHook{recordResponse, func(ctx context.Context, info aiprot.ResponseInfo) error {
+			if options.OnModelResponse == nil {
 				return nil
 			}
-			message := info.Response.Message.Clone()
-			if message.Role == "" {
-				message.Role = aiprot.RoleAssistant
-			}
-			return workspace.history.append(protocol.ModelMessage, workspace.history.runID(), protocol.EventData{Message: &message})
+			return options.OnModelResponse(ctx, protocol.ModelResponseInfo{ResponseInfo: info, APIType: config.APIType})
 		}},
 	})
 	workspace.agent = agent.New(client)
@@ -272,6 +270,7 @@ func (workspace *Workspace) Execute(ctx context.Context, prompt string) (result 
 	}
 	result, err = workspace.agent.Execute(runCtx, agentprot.Request{
 		Model: workspace.config.Model, SystemPrompt: workspace.system, History: workspace.modelHistory(), UserPrompt: prompt, Tools: tools,
+		Reasoning: workspace.config.Reasoning(), ProviderOptions: workspace.config.ProviderOptions,
 		Options: loopprot.RunOptions{
 			MaxSteps: workspace.config.MaxSteps, MaxHistoryRounds: workspace.config.MaxHistoryRounds,
 			Compression: workspace.config.Compression, ConfirmTool: workspace.confirm, Hooks: hooks,
@@ -382,4 +381,23 @@ func (workspace *Workspace) warn(message string) {
 	if workspace.options.Warn != nil {
 		workspace.options.Warn(message)
 	}
+}
+
+func workspaceProvider(config protocol.Config, provider aiprot.Provider) (aiprot.Provider, error) {
+	if provider != nil {
+		return provider, nil
+	}
+	key := ""
+	if config.APIKeyEnv != "" {
+		key = os.Getenv(config.APIKeyEnv)
+	} else {
+		key = os.Getenv("AGENT_LLM_TOKEN")
+		if key == "" {
+			key = os.Getenv("AGENT_LLM_API_KEY")
+		}
+	}
+	return openai.New(openai.Config{
+		BaseURL: config.BaseURL, APIKey: key, APIType: openai.APIType(config.APIType),
+		Retry: openai.RetryPolicy{MaxRetries: *config.ModelMaxRetries},
+	})
 }

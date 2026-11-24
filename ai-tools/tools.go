@@ -7,6 +7,7 @@ import (
 
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-tools/filesystem"
+	"github.com/SmilingXinyi/agent-engine/ai-tools/interaction"
 	"github.com/SmilingXinyi/agent-engine/ai-tools/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-tools/shell"
 )
@@ -14,6 +15,10 @@ import (
 // Build constructs enabled tools without running them. It has no global registry
 // and no dependency on Agent or MCP. Rebuild after changing configuration.
 func Build(config protocol.Config) ([]loopprot.Tool, error) {
+	return BuildWithDependencies(config, protocol.Dependencies{})
+}
+
+func BuildWithDependencies(config protocol.Config, dependencies protocol.Dependencies) ([]loopprot.Tool, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -32,6 +37,8 @@ func Build(config protocol.Config) ([]loopprot.Tool, error) {
 			tool, err = filesystem.NewListTool(config.Filesystem)
 		case protocol.Shell:
 			tool, err = shell.NewTool(config.Shell)
+		case protocol.AskUser:
+			tool, err = interaction.NewAskUserTool(dependencies.AskUser)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("build built-in tool %q: %w", name, err)

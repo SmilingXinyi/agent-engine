@@ -24,8 +24,8 @@ func writeRole(t *testing.T, root, name, model, tools string) string {
 	if err := os.Mkdir(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	writeJSON(t, filepath.Join(directory, "workspace.json"), map[string]string{"description": "Investigate " + name, "model": model})
-	writeFile(t, filepath.Join(directory, "tools.json"), []byte(tools))
+	writeJSON(t, filepath.Join(directory, "workspace.yaml"), map[string]string{"description": "Investigate " + name, "model": model})
+	writeFile(t, filepath.Join(directory, "tools.yaml"), []byte(tools))
 	return directory
 }
 
@@ -35,7 +35,7 @@ func subagentCall(id, name, arguments string) aiprot.ToolCall {
 
 func TestWorkspaceSubagents(t *testing.T) {
 	root := newProject(t)
-	writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte(`{"builtinTools":{"read_file":{},"list_directory":{}}}`))
+	writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte(`{"builtinTools":{"read_file":{},"list_directory":{}}}`))
 	writeFile(t, filepath.Join(root, "AGENTS.md"), []byte("shared repository rules"))
 	writeFile(t, filepath.Join(root, ".agents/prompt.md"), []byte("parent-only instructions"))
 	writeFile(t, filepath.Join(root, "entry.txt"), []byte("the entry point is Start\n"))
@@ -138,10 +138,10 @@ func TestSubagentConfiguration(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			root := newProject(t)
-			writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte(`{"builtinTools":{"read_file":{"disabled":true},"list_directory":{},"write_file":{}}}`))
+			writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte(`{"builtinTools":{"read_file":{"disabled":true},"list_directory":{},"write_file":{}}}`))
 			directory := writeRole(t, root, "repo", "", scenario.tools)
 			if _, err := Open(t.Context(), root, options); err == nil || !strings.Contains(err.Error(), scenario.want) ||
-				!strings.Contains(err.Error(), filepath.Join(directory, "tools.json")) {
+				!strings.Contains(err.Error(), filepath.Join(directory, "tools.yaml")) {
 				t.Fatalf("unexpected Open error: %v", err)
 			}
 		})
@@ -158,9 +158,9 @@ func TestSubagentConfiguration(t *testing.T) {
 	})
 	t.Run("mcp_name_collision", func(t *testing.T) {
 		root := newProject(t)
-		writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte(`{"builtinTools":{"list_directory":{}}}`))
+		writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte(`{"builtinTools":{"list_directory":{}}}`))
 		writeRole(t, root, "repo", "", `{"builtinTools":{"list_directory":{}}}`)
-		writeJSON(t, filepath.Join(root, ".agents/mcp.json"), mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
+		writeJSON(t, filepath.Join(root, ".agents/mcp.yaml"), mcpprot.Config{Servers: map[string]mcpprot.ServerConfig{
 			"subagent": mcpServer(t, filepath.Join(root, "mcp"), "repo"),
 		}})
 		if _, err := Open(t.Context(), root, options); err == nil || !strings.Contains(err.Error(), `duplicate workspace tool "subagent_repo"`) {
@@ -173,7 +173,7 @@ func TestWorkspaceSubagentFailures(t *testing.T) {
 	for _, scenario := range []string{"deny_parent", "deny_child", "timeout", "cancel"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := newProject(t)
-			writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte(`{"builtinTools":{"read_file":{}}}`))
+			writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte(`{"builtinTools":{"read_file":{}}}`))
 			writeFile(t, filepath.Join(root, "private.txt"), []byte("must remain unread"))
 			writeRole(t, root, "repo", "child", `{"builtinTools":{"read_file":{}}}`)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -244,7 +244,7 @@ func TestRepositoryResearchComparison(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := newProject(t)
 			const config = `{"builtinTools":{"read_file":{}}}`
-			writeFile(t, filepath.Join(root, ".agents/tools.json"), []byte(config))
+			writeFile(t, filepath.Join(root, ".agents/tools.yaml"), []byte(config))
 			padding := strings.Repeat("// unrelated implementation detail\n", 76)
 			writeFile(t, filepath.Join(root, "entry.go"), []byte("package example\nfunc Run() bool { return Confirm() }\n"+padding))
 			writeFile(t, filepath.Join(root, "approval.go"), []byte("package example\nfunc Confirm() bool { return false }\n"+padding))
