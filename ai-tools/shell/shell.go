@@ -13,12 +13,22 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-tools/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-tools/utils"
 )
+
+const (
+	commandSchema    = `{"type":"string","minLength":1}`
+	maxPurposeLength = 120
+)
+
+type commandArguments struct {
+	Command string `json:"command"`
+}
 
 func NewTool(options protocol.ShellOptions) (loopprot.Tool, error) {
 	if strings.TrimSpace(options.Dir) == "" {
@@ -60,12 +70,10 @@ func NewTool(options protocol.ShellOptions) (loopprot.Tool, error) {
 		Definition: aiprot.ToolDefinition{
 			Name:        protocol.Shell,
 			Description: fmt.Sprintf("Execute a shell command in the configured working directory. Returns stdout, stderr and exit_code. Timeout %d seconds; captures up to %d bytes per output stream. Working directory is not a filesystem sandbox.", options.TimeoutSeconds, options.MaxOutputBytes),
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","minLength":1}},"required":["command"],"additionalProperties":false}`),
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"command":` + commandSchema + `},"required":["command"],"additionalProperties":false}`),
 		},
 		Execute: func(ctx context.Context, arguments json.RawMessage) (aiprot.ToolResult, error) {
-			var input struct {
-				Command string `json:"command"`
-			}
+			var input commandArguments
 			if err := utils.DecodeObject(arguments, &input); err != nil {
 				return aiprot.ToolResult{}, fmt.Errorf("shell arguments: %w", err)
 			}
@@ -111,6 +119,46 @@ func NewTool(options protocol.ShellOptions) (loopprot.Tool, error) {
 			return result, nil
 		},
 	}, nil
+}
+
+// WithPurpose adapts a tool created by NewTool for callers that display the
+// model's reason for running a command.
+func WithPurpose(tool loopprot.Tool) loopprot.Tool {
+	execute := tool.Execute
+	tool.Definition.InputSchema = json.RawMessage(fmt.Sprintf(
+		`{
+  "type": "object",
+  "properties": {
+    "command": %s,
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": %d,
+      "description": "State the concrete goal of this command in one short line in the user's language."
+    }
+  },
+  "required": ["command", "purpose"],
+  "additionalProperties": false
+}`,
+		commandSchema, maxPurposeLength))
+	tool.Execute = func(ctx context.Context, arguments json.RawMessage) (aiprot.ToolResult, error) {
+		var input struct {
+			commandArguments
+			Purpose string `json:"purpose"`
+		}
+		if err := utils.DecodeObject(arguments, &input); err != nil {
+			return aiprot.ToolResult{}, fmt.Errorf("shell arguments: %w", err)
+		}
+		if strings.TrimSpace(input.Purpose) == "" || strings.ContainsAny(input.Purpose, "\r\n") || utf8.RuneCountInString(input.Purpose) > maxPurposeLength {
+			return aiprot.ToolResult{}, fmt.Errorf("shell purpose must be a single nonempty line of up to %d characters", maxPurposeLength)
+		}
+		command, err := json.Marshal(input.commandArguments)
+		if err != nil {
+			return aiprot.ToolResult{}, err
+		}
+		return execute(ctx, command)
+	}
+	return tool
 }
 
 // Discard excess output while continuing to drain pipes, so truncation cannot

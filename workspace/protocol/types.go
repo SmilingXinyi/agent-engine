@@ -41,14 +41,16 @@ type Config struct {
 // Provider bypasses provider construction, but Config.Model is still required.
 // A nil ConfirmTool denies calls requiring approval. Hooks are observational;
 // errors stop the existing loop. Warn reports repairs and interrupted runs.
+// RequireShellPurpose adds a model-provided goal to built-in Shell calls.
 type OpenOptions struct {
-	Provider        aiprot.Provider
-	Approval        ApprovalMode
-	ConfirmTool     func(context.Context, loopprot.ToolConfirmationInfo) (loopprot.ToolConfirmationDecision, error)
-	AskUser         toolsprot.AskUserFunc
-	OnModelResponse func(context.Context, ModelResponseInfo) error
-	Hooks           loopprot.Hooks
-	Warn            func(string)
+	Provider            aiprot.Provider
+	Approval            ApprovalMode
+	RequireShellPurpose bool
+	ConfirmTool         func(context.Context, loopprot.ToolConfirmationInfo) (loopprot.ToolConfirmationDecision, error)
+	AskUser             toolsprot.AskUserFunc
+	OnModelResponse     func(context.Context, ModelResponseInfo) error
+	Hooks               loopprot.Hooks
+	Warn                func(string)
 }
 
 // ModelResponseInfo describes a model call made directly by the workspace.

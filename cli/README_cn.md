@@ -108,7 +108,7 @@ timeoutSeconds: 900
 | `--approval all` | 所有工具调用逐次确认 |
 | `--approval auto` | 自动执行已启用的工具 |
 
-输入 `y` 或 `yes` 批准。拒绝会作为工具结果反馈给模型。Shell 和 MCP 以 CLI 进程的权限运行。 [工具的执行范围](../workspace/README_cn.md#确认与资源边界)
+Shell 审批会分别显示模型提供的目标和待执行的完整命令，目标也会出现在结果行。输入 `y` 或 `yes` 批准。拒绝会作为工具结果反馈给模型。Shell 和 MCP 以 CLI 进程的权限运行。 [工具的执行范围](../workspace/README_cn.md#确认与资源边界)
 
 同一工作区一次只能由一个进程打开。意外退出后，重开会保留已记录的结果，并标记未执行或结果未知的调用。若结果未知，请先核实外部操作的状态再重试。`/reset` 保留审计记录，文件和外部操作不会回滚。 [NDJSON 与中断恢复](../workspace/README_cn.md#ndjson-与中断恢复)
 

@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,5 +114,44 @@ func TestInvalidArgumentsAndDependencies(t *testing.T) {
 		if _, err := shell.NewTool(options); err == nil {
 			t.Fatalf("accepted %+v", options)
 		}
+	}
+}
+
+func TestWithPurposeValidatesBeforeExecuting(t *testing.T) {
+	directory := t.TempDir()
+	direct := newShell(t, protocol.ShellOptions{Dir: directory})
+	tool := shell.WithPurpose(direct)
+	var schema struct {
+		Required             []string `json:"required"`
+		AdditionalProperties bool     `json:"additionalProperties"`
+	}
+	if err := json.Unmarshal(tool.Definition.InputSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(schema.Required, "command") || !slices.Contains(schema.Required, "purpose") || schema.AdditionalProperties {
+		t.Fatalf("unexpected shell schema: %s", tool.Definition.InputSchema)
+	}
+	for _, input := range []string{
+		`{"command":"touch marker"}`,
+		`{"command":"touch marker","purpose":null}`,
+		`{"command":"touch marker","purpose":"  "}`,
+		`{"command":"touch marker","purpose":"first\nsecond"}`,
+		`{"command":"touch marker","purpose":"` + strings.Repeat("查", 121) + `"}`,
+		`{"command":"touch marker","purpose":"Check status","unexpected":true}`,
+	} {
+		if _, err := tool.Execute(t.Context(), json.RawMessage(input)); err == nil {
+			t.Fatalf("accepted %s", input)
+		}
+		if _, err := os.Stat(filepath.Join(directory, "marker")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("invalid call reached Shell: %v", err)
+		}
+	}
+	result, err := tool.Execute(t.Context(), json.RawMessage(`{"command":"printf 'hello world'","purpose":"验证输出"}`))
+	if err != nil || result.IsError || !strings.Contains(result.Text(), `"stdout":"hello world"`) {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	result, err = direct.Execute(t.Context(), json.RawMessage(`{"command":"printf legacy"}`))
+	if err != nil || result.IsError || !strings.Contains(result.Text(), `"stdout":"legacy"`) {
+		t.Fatalf("direct call result=%+v err=%v", result, err)
 	}
 }

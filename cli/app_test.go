@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -428,5 +430,84 @@ func TestRunConfigurePreviewsAndApplies(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(root, ".agents/mcp.yaml"))
 	if err != nil || !strings.Contains(string(content), "example: {disabled: true}") || requests.Load() != 2 {
 		t.Fatalf("MCP=%q requests=%d err=%v", content, requests.Load(), err)
+	}
+}
+
+func TestChatShellPurposeApprovalAndHistory(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is unavailable")
+	}
+	for _, test := range []struct {
+		name, answer, status string
+	}{
+		{name: "approve", answer: "y", status: "succeeded"},
+		{name: "deny", answer: "n", status: "denied"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := project(t)
+			if err := os.WriteFile(filepath.Join(root, ".agents/tools.yaml"), []byte("builtinTools: {shell: {}}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			const purpose = "验证工作区可以生成结果文件"
+			const command = "printf verified > review-note"
+			arguments, err := json.Marshal(map[string]string{"command": command, "purpose": purpose})
+			if err != nil {
+				t.Fatal(err)
+			}
+			requests := 0
+			options := protocol.OpenOptions{Provider: cliProvider(func(_ context.Context, request aiprot.ModelRequest) (aiprot.ModelResponse, error) {
+				requests++
+				if requests == 1 {
+					if len(request.Tools) != 1 || request.Tools[0].Name != "shell" {
+						t.Fatalf("tools=%v", request.Tools)
+					}
+					var schema struct {
+						Required []string `json:"required"`
+					}
+					if err := json.Unmarshal(request.Tools[0].InputSchema, &schema); err != nil ||
+						!slices.Contains(schema.Required, "purpose") || !slices.Contains(schema.Required, "command") {
+						t.Fatalf("schema=%s err=%v", request.Tools[0].InputSchema, err)
+					}
+					call := aiprot.ToolCall{ID: "shell-test", Name: "shell", Arguments: arguments}
+					return aiprot.ModelResponse{Message: aiprot.Message{Role: aiprot.RoleAssistant, Parts: []aiprot.ContentPart{{Type: aiprot.ContentToolCall, ToolCall: &call}}}}, nil
+				}
+				return aiprot.ModelResponse{Message: aiprot.TextMessage(aiprot.RoleAssistant, "done")}, nil
+			})}
+			var output bytes.Buffer
+			input := io.NopCloser(strings.NewReader("check Shell\n" + test.answer + "\n/exit\n"))
+			if err := chat(t.Context(), root, options, input, &output, nil); err != nil {
+				t.Fatal(err)
+			}
+			transcript := output.String()
+			approval := "Execute shell · " + purpose + "\nCommand: \"" + command + "\""
+			if !strings.Contains(transcript, approval) ||
+				!strings.Contains(transcript, "[tool] shell · "+purpose+" · "+test.status+" · ") {
+				t.Fatal(transcript)
+			}
+			content, err := os.ReadFile(filepath.Join(root, "review-note"))
+			if test.name == "approve" {
+				if err != nil || string(content) != "verified" {
+					t.Fatalf("file=%q err=%v", content, err)
+				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("denied Shell modified workspace: %v", err)
+			}
+
+			output.Reset()
+			input = io.NopCloser(strings.NewReader("/exit\n"))
+			if err := chat(t.Context(), root, options, input, &output, nil, chatDisplayOptions{resume: true}); err != nil {
+				t.Fatal(err)
+			}
+			if requests != 2 || !strings.Contains(output.String(), "[tool] shell · "+purpose) {
+				t.Fatalf("requests=%d transcript=%s", requests, output.String())
+			}
+		})
+	}
+}
+
+func TestToolLabelForLegacyShellCall(t *testing.T) {
+	call := aiprot.ToolCall{Name: "shell", Arguments: json.RawMessage(`{"command":"git status"}`)}
+	if label := toolLabel(call); label != "shell - git" {
+		t.Fatalf("legacy shell label = %q", label)
 	}
 }

@@ -195,10 +195,19 @@ func modelFailure(info protocol.ModelResponseInfo) string {
 
 func toolLabel(call aiprot.ToolCall) string {
 	name := terminalText(call.Name, 80, false)
+	if call.Name == toolsprot.Shell {
+		purpose, command := shellCallDetails(call)
+		if purpose != "" {
+			return name + " · " + purpose
+		}
+		if fields := strings.Fields(command); len(fields) > 0 && regexpCommand.MatchString(fields[0]) {
+			return name + " - " + fields[0]
+		}
+		return name
+	}
 	var arguments struct {
-		Path    string `json:"path"`
-		Command string `json:"command"`
-		Name    string `json:"name"`
+		Path string `json:"path"`
+		Name string `json:"name"`
 	}
 	if json.Unmarshal(call.Arguments, &arguments) != nil {
 		return name
@@ -207,14 +216,6 @@ func toolLabel(call aiprot.ToolCall) string {
 	switch call.Name {
 	case toolsprot.ReadFile, toolsprot.WriteFile, toolsprot.ListDirectory, toolsprot.ApplyPatch:
 		action = arguments.Path
-	case toolsprot.Shell:
-		fields := strings.Fields(arguments.Command)
-		if len(fields) > 0 {
-			command := fields[0]
-			if regexpCommand.MatchString(command) {
-				action = command
-			}
-		}
 	case "get_skill":
 		action = arguments.Name
 	}
@@ -222,6 +223,20 @@ func toolLabel(call aiprot.ToolCall) string {
 		return name
 	}
 	return name + " - " + terminalText(action, 120, false)
+}
+
+func shellCallDetails(call aiprot.ToolCall) (purpose, command string) {
+	if call.Name != toolsprot.Shell {
+		return "", ""
+	}
+	var arguments struct {
+		Purpose string `json:"purpose"`
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(call.Arguments, &arguments) != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(terminalText(arguments.Purpose, 120, false)), arguments.Command
 }
 
 var regexpCommand = regexp.MustCompile(`^[a-zA-Z0-9._/-]{1,80}$`)

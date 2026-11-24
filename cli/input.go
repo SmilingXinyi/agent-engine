@@ -215,8 +215,15 @@ func terminalConfirmation(input *chatInput, output io.Writer) func(context.Conte
 		if err := ctx.Err(); err != nil {
 			return loopprot.ToolConfirmationDecision{}, err
 		}
-		if _, err := fmt.Fprintf(output, "Execute %s %s?\n", terminalText(info.Call.Name, 80, false), terminalText(string(info.Call.Arguments), 0, true)); err != nil {
-			return loopprot.ToolConfirmationDecision{}, err
+		purpose, command := shellCallDetails(info.Call)
+		var writeErr error
+		if purpose != "" {
+			_, writeErr = fmt.Fprintf(output, "Execute shell · %s\nCommand: %s\n", purpose, terminalText(strconv.Quote(command), 0, false))
+		} else {
+			_, writeErr = fmt.Fprintf(output, "Execute %s %s?\n", terminalText(info.Call.Name, 80, false), terminalText(string(info.Call.Arguments), 0, true))
+		}
+		if writeErr != nil {
+			return loopprot.ToolConfirmationDecision{}, writeErr
 		}
 		text, err := input.Read(ctx, "Approve [y/N]: ", false)
 		if err != nil {

@@ -108,7 +108,7 @@ The system context includes the workspace description, `prompt.md`, root `AGENTS
 | `--approval all` | Ask before every tool call |
 | `--approval auto` | Execute enabled tools automatically |
 
-Enter `y` or `yes` to approve. A denial is returned to the model as a tool result. Shell and MCP run with the CLI process's permissions. [Workspace tool boundaries](../workspace/README_cn.md#确认与资源边界)
+Shell approval shows the model’s goal and the full command separately. The result line repeats the goal. Enter `y` or `yes` to approve. A denial is returned to the model as a tool result. Shell and MCP run with the CLI process's permissions. [Workspace tool boundaries](../workspace/README_cn.md#确认与资源边界)
 
 One process at a time can open a workspace. Reopening after interruption retains recorded results and marks calls as unexecuted or of unknown outcome. Verify external effects before retrying a call with an unknown outcome. `/reset` retains the audit log, and files and external effects remain as they were before the reset. [NDJSON history and recovery](../workspace/README.md#durable-ndjson-history)
 

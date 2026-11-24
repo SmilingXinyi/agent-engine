@@ -19,6 +19,8 @@ import (
 	aiprot "github.com/SmilingXinyi/agent-engine/ai-sdk/protocol"
 	"github.com/SmilingXinyi/agent-engine/ai-sdk/providers/openai"
 	loopprot "github.com/SmilingXinyi/agent-engine/ai-tool-loop/protocol"
+	toolsprot "github.com/SmilingXinyi/agent-engine/ai-tools/protocol"
+	"github.com/SmilingXinyi/agent-engine/ai-tools/shell"
 	compressionprot "github.com/SmilingXinyi/agent-engine/compression/protocol"
 	mcpruntime "github.com/SmilingXinyi/agent-engine/mcp-runtime"
 	"github.com/SmilingXinyi/agent-engine/workspace/protocol"
@@ -95,6 +97,14 @@ func Open(ctx context.Context, directory string, options protocol.OpenOptions) (
 	tools, mcpConfig, instructions, err := loadResources(root, string(projectInstructions), options.AskUser)
 	if err != nil {
 		return nil, err
+	}
+	if options.RequireShellPurpose {
+		for index, tool := range tools {
+			if tool.Definition.Name == toolsprot.Shell {
+				tools[index] = shell.WithPurpose(tool)
+				break
+			}
+		}
 	}
 	roles, err := loadSubagentRoles(root, config.Model, string(projectInstructions), tools)
 	if err != nil {

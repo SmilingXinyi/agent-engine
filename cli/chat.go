@@ -35,6 +35,7 @@ func chat(ctx context.Context, directory string, options protocol.OpenOptions, i
 		return confirmation(ctx, info)
 	}
 	options.AskUser = terminalQuestion(prompts, output, display)
+	options.RequireShellPurpose = true
 	lifetime, cancelLifetime := context.WithCancel(ctx)
 	defer cancelLifetime()
 	type opened struct {
